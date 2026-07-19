@@ -16,6 +16,8 @@ from fruit_agent.identity.service import has_permission
     ("role", "permission", "allowed"),
     [
         (Role.owner, "members:write", True),
+        (Role.owner, "imports:write", True),
+        (Role.owner, "approval:request", True),
         (Role.implementer, "members:write", True),
         (Role.operator, "members:write", False),
         (Role.support, "knowledge:read", True),
