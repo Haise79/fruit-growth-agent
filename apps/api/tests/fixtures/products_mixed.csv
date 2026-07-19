@@ -1,0 +1,3 @@
+sku_code,name,price,inventory,valid_until
+A1,苹果,29.90,10,2030-01-01T00:00:00Z
+A2,梨,-1,x,2020-01-01T00:00:00Z
