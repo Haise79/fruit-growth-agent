@@ -4,6 +4,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fruit_agent.audit.middleware import get_request_id
+from fruit_agent.audit.service import AuditService
 from fruit_agent.db import get_session, tenant_session
 from fruit_agent.identity.dependencies import require_permissions
 from fruit_agent.identity.models import MembershipStatus, Role
@@ -79,6 +81,21 @@ async def write_member(
     try:
         async with tenant_session(session, principal.tenant_id):
             record = await create_member(session, principal.tenant_id, member)
+            await AuditService(
+                session=session,
+                principal=principal,
+                request_id=get_request_id(),
+            ).record(
+                action="member.created",
+                entity_type="membership",
+                entity_id=record.membership.id,
+                before={},
+                after={
+                    "email": record.email,
+                    "role": record.membership.role,
+                    "status": record.membership.status,
+                },
+            )
     except DuplicateMemberError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
