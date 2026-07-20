@@ -120,6 +120,27 @@ def _outcome_service(session: AsyncSession) -> CopilotService:
     )
 
 
+class _ForcedUniqueConflictRepository(CopilotRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session)
+        self._hide_existing_once = True
+
+    async def get_outcome_by_idempotency_key(
+        self,
+        tenant_id: UUID,
+        case_id: UUID,
+        idempotency_key: str,
+    ) -> CopilotOutcomeEvent | None:
+        if self._hide_existing_once:
+            self._hide_existing_once = False
+            return None
+        return await super().get_outcome_by_idempotency_key(
+            tenant_id,
+            case_id,
+            idempotency_key,
+        )
+
+
 @pytest.mark.asyncio
 async def test_outcome_duplicate_returns_original_and_records_one_row(
     outcomes_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
@@ -309,73 +330,120 @@ async def test_outcome_database_rejects_suggestion_from_another_case(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_duplicate_and_close_late_event_are_serialized(
+async def test_case_lock_serializes_close_before_late_payment(
     outcomes_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
 ) -> None:
     tenant_a, _, session = outcomes_context
     case_id, _ = await _seed_case(tenant_a, with_suggestion=False)
-    barrier = asyncio.Barrier(2)
 
-    async def record(event_type: CopilotOutcomeEventType, key: str) -> object:
+    late_attempted = asyncio.Event()
+
+    async def record_late_payment() -> object:
         async with SessionFactory() as worker_session:
             async with tenant_session(worker_session, tenant_a.tenant_id):
-                await barrier.wait()
+                late_attempted.set()
                 result = await _outcome_service(worker_session).record_outcome_event(
                     tenant_id=tenant_a.tenant_id,
                     case_id=case_id,
-                    idempotency_key=key,
-                    request=CopilotOutcomeEventCreate(event_type=event_type),
+                    idempotency_key="late-race",
+                    request=CopilotOutcomeEventCreate(
+                        event_type=CopilotOutcomeEventType.payment
+                    ),
                 )
-                assert result is not None
-                event, _, duplicate = result
-                if not duplicate:
-                    await AuditService(
-                        session=worker_session,
-                        principal=tenant_a,
-                        request_id=f"race-{key}",
-                    ).record(
-                        action="copilot_outcome_recorded",
-                        entity_type="copilot_outcome_event",
-                        entity_id=event.id,
-                        before={},
-                        after={"event_type": event.event_type},
-                    )
-                return event.id
-
-    first_id, second_id = await asyncio.gather(
-        record(CopilotOutcomeEventType.payment, "same-key"),
-        record(CopilotOutcomeEventType.payment, "same-key"),
-    )
-
-    assert first_id == second_id
-    async with tenant_session(session, tenant_a.tenant_id):
-        assert await session.scalar(select(func.count()).select_from(CopilotOutcomeEvent)) == 1
-        assert await session.scalar(select(func.count()).select_from(AuditEvent)) == 1
+                return result
 
     async with SessionFactory() as lock_session:
         async with tenant_session(lock_session, tenant_a.tenant_id):
-            await lock_session.scalar(
-                select(CopilotCase)
-                .where(CopilotCase.tenant_id == tenant_a.tenant_id, CopilotCase.id == case_id)
-                .with_for_update()
+            service = _outcome_service(lock_session)
+            locked_case = await service.repository.get_case_for_update(
+                tenant_a.tenant_id,
+                case_id,
             )
-            close_task = asyncio.create_task(
-                record(CopilotOutcomeEventType.case_closed, "close-race")
+            assert locked_case is not None
+            late_task = asyncio.create_task(record_late_payment())
+            await late_attempted.wait()
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(late_task), timeout=0.1)
+            closed = await service.record_outcome_event(
+                tenant_id=tenant_a.tenant_id,
+                case_id=case_id,
+                idempotency_key="close-race",
+                request=CopilotOutcomeEventCreate(
+                    event_type=CopilotOutcomeEventType.case_closed
+                ),
             )
-            await asyncio.sleep(0.05)
-            late_task = asyncio.create_task(
-                record(CopilotOutcomeEventType.payment, "late-race")
+            assert closed is not None
+            closed_event, _, duplicate = closed
+            assert duplicate is False
+            await AuditService(
+                session=lock_session,
+                principal=tenant_a,
+                request_id="race-close",
+            ).record(
+                action="copilot_outcome_recorded",
+                entity_type="copilot_outcome_event",
+                entity_id=closed_event.id,
+                before={},
+                after={"event_type": closed_event.event_type},
             )
-            await asyncio.sleep(0.05)
 
-    close_result, late_result = await asyncio.gather(
-        close_task,
-        late_task,
-        return_exceptions=True,
-    )
-    assert isinstance(close_result, UUID)
+    late_results = await asyncio.gather(late_task, return_exceptions=True)
+    assert len(late_results) == 1
+    late_result = late_results[0]
     assert isinstance(late_result, Exception)
     assert getattr(late_result, "status_code", None) == 409
+    async with tenant_session(session, tenant_a.tenant_id):
+        assert await session.scalar(select(func.count()).select_from(CopilotOutcomeEvent)) == 1
+        assert await session.scalar(select(func.count()).select_from(AuditEvent)) == 1
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_integrity_error_replay_lookup_returns_original_and_keeps_session_usable(
+    outcomes_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = outcomes_context
+    case_id, _ = await _seed_case(tenant_a, with_suggestion=False)
+    original_id = uuid4()
+    async with SessionFactory() as seed_session:
+        async with tenant_session(seed_session, tenant_a.tenant_id):
+            seed_session.add(
+                CopilotOutcomeEvent(
+                    id=original_id,
+                    tenant_id=tenant_a.tenant_id,
+                    case_id=case_id,
+                    event_type="payment",
+                    idempotency_key="forced-unique-conflict",
+                )
+            )
+            await seed_session.flush()
+
+    async with SessionFactory() as worker_session:
+        async with tenant_session(worker_session, tenant_a.tenant_id):
+            repository = _ForcedUniqueConflictRepository(worker_session)
+            from fruit_agent.knowledge.repository import KnowledgeRepository
+
+            result = await CopilotService(
+                repository=repository,
+                knowledge_repository=KnowledgeRepository(worker_session),
+                providers=[],
+            ).record_outcome_event(
+                tenant_id=tenant_a.tenant_id,
+                case_id=case_id,
+                idempotency_key="forced-unique-conflict",
+                request=CopilotOutcomeEventCreate(
+                    event_type=CopilotOutcomeEventType.payment
+                ),
+            )
+            assert result is not None
+            replayed, _, duplicate = result
+            visible = await worker_session.scalar(
+                select(CopilotOutcomeEvent).where(CopilotOutcomeEvent.id == original_id)
+            )
+
+    assert replayed.id == original_id
+    assert duplicate is True
+    assert visible is not None
     await session.close()
 
 

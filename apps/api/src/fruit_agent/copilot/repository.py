@@ -148,6 +148,5 @@ class CopilotRepository:
                 self.session.add(event)
                 await self.session.flush()
         except IntegrityError:
-            self.session.expunge(event)
             raise
         return event
