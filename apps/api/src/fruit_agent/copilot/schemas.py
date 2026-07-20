@@ -1,9 +1,9 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class CopilotStage(StrEnum):
@@ -42,6 +42,15 @@ class CopilotCaseStatus(StrEnum):
 class CopilotCitationType(StrEnum):
     sku = "sku"
     knowledge = "knowledge"
+
+
+class CopilotOutcomeEventType(StrEnum):
+    suggestion_adopted = "suggestion_adopted"
+    suggestion_rejected = "suggestion_rejected"
+    payment = "payment"
+    refund = "refund"
+    complaint = "complaint"
+    case_closed = "case_closed"
 
 
 class SafetyClassification(BaseModel):
@@ -83,6 +92,33 @@ class CopilotSuggestionEdit(BaseModel):
         if not value.strip():
             raise ValueError("edited_text may not be blank")
         return value
+
+
+class CopilotOutcomeEventCreate(BaseModel):
+    event_type: CopilotOutcomeEventType
+    suggestion_id: UUID | None = None
+    occurred_at: datetime | None = None
+    metadata: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def adoption_requires_suggestion(self) -> Self:
+        if self.event_type in {
+            CopilotOutcomeEventType.suggestion_adopted,
+            CopilotOutcomeEventType.suggestion_rejected,
+        } and self.suggestion_id is None:
+            raise ValueError("suggestion_id is required for suggestion outcomes")
+        return self
+
+
+class CopilotOutcomeEventRead(BaseModel):
+    id: UUID
+    case_id: UUID
+    suggestion_id: UUID | None
+    event_type: CopilotOutcomeEventType
+    occurred_at: datetime
+    metadata: dict[str, Any]
+    created_at: datetime
+    case_status: CopilotCaseStatus
 
 
 class CopilotCitationRead(BaseModel):

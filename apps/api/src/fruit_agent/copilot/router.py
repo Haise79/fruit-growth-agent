@@ -1,13 +1,19 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fruit_agent.audit.middleware import get_request_id
+from fruit_agent.audit.service import AuditService
 from fruit_agent.copilot.repository import CopilotRepository
 from fruit_agent.copilot.schemas import (
     CopilotCaseCreate,
     CopilotCaseRead,
+    CopilotOutcomeEventCreate,
+    CopilotOutcomeEventRead,
+    CopilotOutcomeEventType,
+    CopilotCaseStatus,
     CopilotSuggestionEdit,
     CopilotSuggestionRead,
 )
@@ -149,4 +155,79 @@ async def edit_suggestion(
                 detail="copilot suggestion not found",
             )
         response = CopilotSuggestionRead.model_validate(suggestion)
+    return response
+
+
+@router.post(
+    "/cases/{case_id}/events",
+    response_model=CopilotOutcomeEventRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def record_outcome_event(
+    case_id: UUID,
+    body: CopilotOutcomeEventCreate,
+    http_request: Request,
+    idempotency_key: Annotated[
+        str,
+        Header(min_length=1, max_length=200),
+    ],
+    principal: Annotated[
+        TenantPrincipal,
+        Depends(require_permissions("copilot:use")),
+    ],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    providers: Annotated[
+        list[ProviderBinding],
+        Depends(get_provider_bindings),
+    ],
+) -> CopilotOutcomeEventRead:
+    if not idempotency_key.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Idempotency-Key may not be blank",
+        )
+    async with tenant_session(session, principal.tenant_id):
+        result = await _service(session, providers).record_outcome_event(
+            tenant_id=principal.tenant_id,
+            case_id=case_id,
+            idempotency_key=idempotency_key,
+            request=body,
+        )
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="copilot case or suggestion not found",
+            )
+        event, case, duplicate = result
+        if not duplicate:
+            await AuditService(
+                session=session,
+                principal=principal,
+                request_id=getattr(http_request.state, "request_id", get_request_id()),
+            ).record(
+                action="copilot_outcome_recorded",
+                entity_type="copilot_outcome_event",
+                entity_id=event.id,
+                before={},
+                after={
+                    "case_id": str(event.case_id),
+                    "suggestion_id": (
+                        str(event.suggestion_id)
+                        if event.suggestion_id is not None
+                        else None
+                    ),
+                    "event_type": event.event_type,
+                    "metadata": event.metadata_,
+                },
+            )
+        response = CopilotOutcomeEventRead(
+            id=event.id,
+            case_id=event.case_id,
+            suggestion_id=event.suggestion_id,
+            event_type=CopilotOutcomeEventType(event.event_type),
+            occurred_at=event.occurred_at,
+            metadata=event.metadata_,
+            created_at=event.created_at,
+            case_status=CopilotCaseStatus(case.status),
+        )
     return response

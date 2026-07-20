@@ -1,3 +1,4 @@
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import select
@@ -9,6 +10,7 @@ from fruit_agent.copilot.models import (
     CopilotCitationSnapshot,
     CopilotSuggestion,
 )
+from fruit_agent.copilot.outcomes import CopilotOutcomeEvent
 
 
 class CopilotRepository:
@@ -101,3 +103,28 @@ class CopilotRepository:
 
     def add_citation(self, citation: CopilotCitationSnapshot) -> None:
         self.session.add(citation)
+
+    async def get_outcome_by_idempotency_key(
+        self,
+        tenant_id: UUID,
+        case_id: UUID,
+        idempotency_key: str,
+    ) -> CopilotOutcomeEvent | None:
+        return cast(
+            CopilotOutcomeEvent | None,
+            await self.session.scalar(
+            select(CopilotOutcomeEvent).where(
+                CopilotOutcomeEvent.tenant_id == tenant_id,
+                CopilotOutcomeEvent.case_id == case_id,
+                CopilotOutcomeEvent.idempotency_key == idempotency_key,
+            )
+            ),
+        )
+
+    async def add_outcome_event(
+        self,
+        event: CopilotOutcomeEvent,
+    ) -> CopilotOutcomeEvent:
+        self.session.add(event)
+        await self.session.flush()
+        return event

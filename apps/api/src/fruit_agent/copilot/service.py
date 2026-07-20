@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from typing import Any, cast
 from uuid import UUID
 
+from fruit_agent.common.errors import DomainError
+from fruit_agent.common.redaction import redact
 from fruit_agent.common.redaction import redact_text
 from fruit_agent.copilot.models import (
     CopilotCase,
     CopilotCitationSnapshot,
     CopilotSuggestion,
 )
+from fruit_agent.copilot.outcomes import CopilotOutcomeEvent
 from fruit_agent.copilot.repository import CopilotRepository
 from fruit_agent.copilot.safety import (
     classify_customer_message,
@@ -21,6 +25,7 @@ from fruit_agent.copilot.schemas import (
     CopilotCaseStatus,
     CopilotCitationType,
     CopilotIntent,
+    CopilotOutcomeEventCreate,
     CopilotRisk,
     CopilotStage,
 )
@@ -547,3 +552,57 @@ class CopilotService:
         await self.repository.flush()
         await self.repository.refresh_suggestion(suggestion)
         return suggestion
+
+    async def record_outcome_event(
+        self,
+        *,
+        tenant_id: UUID,
+        case_id: UUID,
+        idempotency_key: str,
+        request: CopilotOutcomeEventCreate,
+    ) -> tuple[CopilotOutcomeEvent, CopilotCase, bool] | None:
+        existing = await self.repository.get_outcome_by_idempotency_key(
+            tenant_id,
+            case_id,
+            idempotency_key,
+        )
+        if existing is not None:
+            case = await self.repository.get_case(tenant_id, case_id)
+            if case is None:
+                raise RuntimeError("persisted outcome event has no visible case")
+            return existing, case, True
+
+        case = await self.repository.get_case(tenant_id, case_id)
+        if case is None:
+            return None
+        if case.status == CopilotCaseStatus.closed.value:
+            raise DomainError(
+                code="copilot_case_closed",
+                message="copilot case is closed",
+                status_code=409,
+            )
+        if request.suggestion_id is not None:
+            suggestion = await self.repository.get_suggestion(
+                tenant_id,
+                case_id,
+                request.suggestion_id,
+            )
+            if suggestion is None:
+                return None
+
+        redacted_metadata = cast(dict[str, Any], redact(request.metadata or {}))
+        event = await self.repository.add_outcome_event(
+            CopilotOutcomeEvent(
+                tenant_id=tenant_id,
+                case_id=case_id,
+                suggestion_id=request.suggestion_id,
+                event_type=request.event_type.value,
+                idempotency_key=idempotency_key,
+                occurred_at=request.occurred_at or datetime.now(UTC),
+                metadata_=redacted_metadata,
+            )
+        )
+        if request.event_type.value == "case_closed":
+            case.status = CopilotCaseStatus.closed.value
+            await self.repository.flush()
+        return event, case, False

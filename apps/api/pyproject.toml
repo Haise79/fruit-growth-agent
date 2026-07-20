@@ -29,6 +29,9 @@ dev = [
   "testcontainers[postgres]>=4.10,<5",
 ]
 
+[project.scripts]
+fruit-agent-evaluate = "fruit_agent.copilot.evaluation:main"
+
 [build-system]
 requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
