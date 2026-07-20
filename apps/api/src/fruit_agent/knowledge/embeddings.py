@@ -39,3 +39,10 @@ def default_embedding_provider() -> EmbeddingProvider | None:
     if get_settings().environment.casefold() in {"development", "test"}:
         return DeterministicEmbeddingProvider()
     return None
+
+
+def embedding_provider_is_allowed(provider: EmbeddingProvider) -> bool:
+    return not (
+        isinstance(provider, DeterministicEmbeddingProvider)
+        and get_settings().environment.casefold() not in {"development", "test"}
+    )

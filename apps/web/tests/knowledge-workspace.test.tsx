@@ -230,6 +230,39 @@ it("edits every lifecycle field and converts API timestamps for datetime-local",
   expect(screen.getByText("草稿")).toBeInTheDocument();
 });
 
+it("round-trips a non-UTC API validity instant through datetime-local", async () => {
+  const apiValue = "2030-01-01T12:00:00+08:00";
+  const approved = knowledgeItem({ valid_until: apiValue });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (url.endsWith(`/items/${KNOWLEDGE_ID}`) && init.method === "PATCH") {
+        expect(JSON.parse(String(init.body)).valid_until).toBe(
+          new Date(apiValue).toISOString(),
+        );
+        return jsonResponse(
+          knowledgeItem({ review_status: "draft", valid_until: apiValue }),
+        );
+      }
+      if (url.endsWith("/api/v1/knowledge/items")) {
+        return jsonResponse([approved]);
+      }
+      throw new Error(`Unexpected request: ${init.method ?? "GET"} ${url}`);
+    }),
+  );
+
+  render(<KnowledgeWorkspace />);
+  const row = await screen.findByRole("row", { name: /果园客服手册/ });
+  await userEvent.click(within(row).getByRole("button", { name: "编辑" }));
+  expect(
+    within(row).getByDisplayValue(localDateTimeValue(apiValue)),
+  ).toBeInTheDocument();
+  await userEvent.click(within(row).getByRole("button", { name: "保存编辑" }));
+
+  expect(await screen.findByText("草稿")).toBeInTheDocument();
+});
+
 it("keeps a failed edit available for correction and retry", async () => {
   vi.stubGlobal(
     "fetch",

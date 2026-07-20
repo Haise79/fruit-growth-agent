@@ -21,14 +21,38 @@ SENSITIVE_KEYS = {
     "alipay_account",
     "payment_account",
     "social_handle",
+    "微信号",
+    "微信账号",
+    "支付宝账号",
+    "客户姓名",
 }
 _NORMALIZED_SENSITIVE_KEYS = {
-    re.sub(r"[^a-z0-9]", "", key.casefold())
+    "".join(character for character in key.casefold() if character.isalnum())
     for key in SENSITIVE_KEYS
 }
 REDACTED = "[REDACTED]"
 PII_PLACEHOLDER = "[REDACTED: PII]"
 _TEXT_PATTERNS = (
+    re.compile(
+        r"(?i)\bqq\b(?:\s*(?:id|number|account))?"
+        r"\s*(?:(?:is)|[:=：]|是|为)?\s*[1-9]\d{4,11}"
+    ),
+    re.compile(
+        r"(?i)(?:alipay(?:\s*(?:account|id|handle))?|支付宝(?:账号|账户)?)"
+        r"\s*(?:(?:is)|[:=：]|是|为)?\s*"
+        r"[A-Za-z0-9][A-Za-z0-9_.@+-]{2,63}"
+    ),
+    re.compile(
+        r"(?i)(?:wechat(?:\s*(?:id|account|handle))?|weixin(?:\s*id)?|"
+        r"微信(?:号|账号)?)\s*(?:(?:is)|[:=：]|是|为)?\s*"
+        r"(?:wxid_)?[A-Za-z0-9_-]{5,64}"
+    ),
+    re.compile(
+        r"(?i)(?:customer[\s_-]*name|客户姓名)"
+        r"\s*(?:(?:is)|[:=：]|是|为)?\s*"
+        r"(?:[A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*){1,3}|"
+        r"[\u4e00-\u9fff·]{2,20})"
+    ),
     re.compile(
         r"(?i)\b(?:ship(?:ping)?\s+to|deliver(?:y)?\s+to|mail\s+to|"
         r"address)\s*[:#=-]?\s*"
@@ -100,7 +124,11 @@ def contains_supported_pii(value: str) -> bool:
 
 
 def _normalize_sensitive_key(key: object) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(key).casefold())
+    return "".join(
+        character
+        for character in str(key).casefold()
+        if character.isalnum()
+    )
 
 
 def redact_text(value: str) -> str:
@@ -123,7 +151,8 @@ def redact_text(value: str) -> str:
 
 def redact(value: object) -> object:
     if isinstance(value, str):
-        return redact_text(value)
+        redacted = redact_text(value)
+        return PII_PLACEHOLDER if contains_supported_pii(redacted) else redacted
     if isinstance(value, Mapping):
         return {
             str(key): (

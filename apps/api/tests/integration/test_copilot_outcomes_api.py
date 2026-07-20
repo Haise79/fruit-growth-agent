@@ -244,18 +244,25 @@ async def test_outcome_redacts_metadata_and_audit_snapshot(
             headers={"Idempotency-Key": "redacted-metadata"},
             json={
                 "event_type": "complaint",
-                "metadata": {"phone": "13800138000", "note": "Call 13900139000"},
+                "metadata": {
+                    "phone": "13800138000",
+                    "note": "Call 13900139000",
+                    "nested": {"social": "contact wxid_alice123"},
+                },
             },
         )
 
     assert response.status_code == 201
     assert "13800138000" not in repr(response.json())
     assert "13900139000" not in repr(response.json())
+    assert "wxid_alice123" not in repr(response.json())
+    assert response.json()["metadata"]["nested"]["social"] == "[REDACTED: PII]"
     async with tenant_session(session, tenant_a.tenant_id):
         audit = await session.scalar(select(AuditEvent).where(AuditEvent.entity_id == UUID(response.json()["id"])))
     assert audit is not None
     assert "13800138000" not in repr(audit.after)
     assert "13900139000" not in repr(audit.after)
+    assert "wxid_alice123" not in repr(audit.after)
     await session.close()
 
 

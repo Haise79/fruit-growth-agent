@@ -50,3 +50,26 @@ def test_outcome_occurred_at_rejects_naive_timestamp() -> None:
                 "occurred_at": "2030-01-01T12:00:00",
             }
         )
+
+
+def test_aware_plus_eight_timestamps_preserve_the_same_instant() -> None:
+    item = KnowledgeItemCreate.model_validate(
+        {
+            "knowledge_type": "faq",
+            "content": "Store apples cold.",
+            "source_name": "Handbook",
+            "responsible_user_id": uuid4(),
+            "valid_until": "2030-01-01T12:00:00+08:00",
+        }
+    )
+    outcome = CopilotOutcomeEventCreate.model_validate(
+        {
+            "event_type": "payment",
+            "occurred_at": "2030-01-01T12:00:00+08:00",
+        }
+    )
+
+    expected = datetime(2030, 1, 1, 4, tzinfo=UTC)
+    assert item.valid_until.astimezone(UTC) == expected
+    assert outcome.occurred_at is not None
+    assert outcome.occurred_at.astimezone(UTC) == expected

@@ -7,6 +7,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from fruit_agent.common.errors import DomainError
 from fruit_agent.common.redaction import (
@@ -39,12 +40,16 @@ from fruit_agent.copilot.schemas import (
 from fruit_agent.knowledge.embeddings import (
     EmbeddingProvider,
     default_embedding_provider,
+    embedding_provider_is_allowed,
 )
 from fruit_agent.knowledge.models import KnowledgeType, MerchantKnowledge
 from fruit_agent.knowledge.repository import KnowledgeRepository
 from fruit_agent.knowledge.schemas import ProductSKURead
 from fruit_agent.knowledge.service import KnowledgeService
-from fruit_agent.model_gateway.schemas import CopilotAgentSuggestion
+from fruit_agent.model_gateway.schemas import (
+    CopilotAgentSuggestion,
+    CopilotSKUFactClaims,
+)
 from fruit_agent.model_gateway.service import (
     InvalidModelOutputError,
     ModelGateway,
@@ -184,6 +189,47 @@ _WEIGHT_CLAIM = re.compile(
 )
 
 
+_PRICE_CLAIM_PATTERNS = (
+    _PRICE_CLAIM,
+    re.compile(
+        r"(?i)(?P<currency>CNY|RMB|USD|[$¥￥])\s*"
+        r"(?P<value>\d+(?:\.\d{1,2})?)"
+    ),
+    re.compile(
+        r"(?i)(?:今天)?(?:只要|售价|价格|price|cost)?\s*"
+        r"(?P<value>\d+(?:\.\d{1,2})?)\s*"
+        r"(?P<currency>元|人民币|CNY|RMB|USD)"
+    ),
+)
+_INVENTORY_CLAIM_PATTERNS = (
+    _INVENTORY_CLAIM,
+    re.compile(
+        r"(?i)(?P<value>\d+)\s*(?:units?\s+)?(?:in\s+stock|left)\b"
+    ),
+)
+_ORIGIN_CLAIM_PATTERNS = (
+    _ORIGIN_CLAIM,
+    re.compile(
+        r"(?i)(?:come(?:s)?\s+from|来自)\s*"
+        r"(?P<value>[A-Za-z\u4e00-\u9fff][^,.;，。；\n]{0,80})"
+    ),
+)
+_WEIGHT_CLAIM_PATTERNS = (
+    _WEIGHT_CLAIM,
+    re.compile(
+        r"(?i)(?P<value>\d+(?:\.\d+)?)\s*"
+        r"(?P<unit>kg|kilograms?|g|grams?|公斤|千克|克)"
+        r"\s*(?:pack|package|包装)"
+    ),
+)
+_FACT_CUES = {
+    "price": re.compile(r"(?i)price|cost|售价|价格|只要|[$¥￥]|元|人民币"),
+    "inventory": re.compile(r"(?i)inventory|stock|库存"),
+    "origin": re.compile(r"(?i)origin|come(?:s)?\s+from|来自"),
+    "weight": re.compile(r"(?i)net\s*weight|weight|pack|重量|净重|包装"),
+}
+
+
 def _matching_topics(text: str) -> set[str]:
     normalized = text.casefold()
     topics = {
@@ -225,8 +271,12 @@ class CopilotService:
         self.repository = repository
         self.knowledge_repository = knowledge_repository
         self.providers = providers
+        resolved_provider = embedding_provider or default_embedding_provider()
         self.embedding_provider = (
-            embedding_provider or default_embedding_provider()
+            resolved_provider
+            if resolved_provider is not None
+            and embedding_provider_is_allowed(resolved_provider)
+            else None
         )
 
     async def create_case(
@@ -399,19 +449,40 @@ class CopilotService:
                 return [], [], reason
             skus.append(result.sku)
 
-        knowledge = await self.knowledge_repository.search_semantic(
-            tenant_id=tenant_id,
-            query_embedding=self.embedding_provider.embed(message),
-            knowledge_types=[
-                KnowledgeType.faq,
-                KnowledgeType.talking_point,
-                KnowledgeType.origin_story,
-            ],
-            now=now,
-            limit=5,
-            embedding_model=self.embedding_provider.model_name,
-            embedding_version=self.embedding_provider.model_version,
-        )
+        try:
+            query_embedding = self.embedding_provider.embed(message)
+            session = getattr(self.repository, "session", None)
+            if isinstance(session, AsyncSession):
+                async with session.begin_nested():
+                    knowledge = await self.knowledge_repository.search_semantic(
+                        tenant_id=tenant_id,
+                        query_embedding=query_embedding,
+                        knowledge_types=[
+                            KnowledgeType.faq,
+                            KnowledgeType.talking_point,
+                            KnowledgeType.origin_story,
+                        ],
+                        now=now,
+                        limit=5,
+                        embedding_model=self.embedding_provider.model_name,
+                        embedding_version=self.embedding_provider.model_version,
+                    )
+            else:
+                knowledge = await self.knowledge_repository.search_semantic(
+                    tenant_id=tenant_id,
+                    query_embedding=query_embedding,
+                    knowledge_types=[
+                        KnowledgeType.faq,
+                        KnowledgeType.talking_point,
+                        KnowledgeType.origin_story,
+                    ],
+                    now=now,
+                    limit=5,
+                    embedding_model=self.embedding_provider.model_name,
+                    embedding_version=self.embedding_provider.model_version,
+                )
+        except Exception:
+            return skus, [], "embedding_provider_error"
         knowledge = [
             item
             for item in knowledge
@@ -439,8 +510,14 @@ class CopilotService:
                     "name": sku.name,
                     "price": str(sku.price),
                     "inventory": sku.inventory,
+                    "variety": sku.variety,
                     "origin": sku.origin,
+                    "orchard": sku.orchard,
                     "taste": sku.taste,
+                    "ripeness": sku.ripeness,
+                    "specification": sku.specification,
+                    "net_weight_grams": sku.net_weight_grams,
+                    "sales_regions": sku.sales_regions,
                     "shipping_eta": sku.shipping_eta,
                     "valid_until": (
                         sku.valid_until.isoformat()
@@ -522,9 +599,10 @@ class CopilotService:
             != CopilotService._normalized_fact(sku.shipping_eta)
         ):
             return False
-        return CopilotService._valid_prose_facts(
+        return CopilotService._valid_all_prose_facts(
             suggestion.suggestion_text,
             sku,
+            claims,
         )
 
     @staticmethod
@@ -534,34 +612,84 @@ class CopilotService:
         return re.sub(r"\s+", " ", value).strip().casefold()
 
     @staticmethod
-    def _valid_prose_facts(text: str, sku: ProductSKURead) -> bool:
-        price = _PRICE_CLAIM.search(text)
-        if price is not None:
-            currency = price.group("currency")
-            if currency is not None and currency.casefold() not in {
-                "cny",
-                "rmb",
-                "¥",
-                "￥",
-            }:
-                return False
-            if Decimal(price.group("value")) != sku.price:
-                return False
+    def _valid_all_prose_facts(
+        text: str,
+        sku: ProductSKURead,
+        claims: CopilotSKUFactClaims,
+    ) -> bool:
+        def matches(patterns: tuple[re.Pattern[str], ...]) -> list[re.Match[str]]:
+            return [
+                match
+                for pattern in patterns
+                for match in pattern.finditer(text)
+            ]
 
-        inventory = _INVENTORY_CLAIM.search(text)
-        if inventory is not None and int(inventory.group("value")) != sku.inventory:
+        def currency_code(value: str | None) -> str | None:
+            if value is None:
+                return None
+            normalized = value.casefold()
+            if normalized in {"cny", "rmb", "¥", "￥", "元", "人民币"}:
+                return "cny"
+            if normalized in {"usd", "$"}:
+                return "usd"
+            return None
+
+        price_matches = matches(_PRICE_CLAIM_PATTERNS)
+        if (
+            _FACT_CUES["price"].search(text) is not None
+            or claims.price is not None
+            or claims.currency is not None
+        ) and not price_matches:
             return False
+        for match in price_matches:
+            price_value = Decimal(match.group("value"))
+            currency = currency_code(match.groupdict().get("currency"))
+            if (
+                price_value != sku.price
+                or currency != "cny"
+                or claims.price != price_value
+                or currency_code(claims.currency) != currency
+            ):
+                return False
 
-        origin = _ORIGIN_CLAIM.search(text)
-        if origin is not None and CopilotService._normalized_fact(
-            origin.group("value")
-        ) != CopilotService._normalized_fact(sku.origin):
+        inventory_matches = matches(_INVENTORY_CLAIM_PATTERNS)
+        if (
+            _FACT_CUES["inventory"].search(text) is not None
+            or claims.inventory is not None
+        ) and not inventory_matches:
             return False
+        for match in inventory_matches:
+            inventory_value = int(match.group("value"))
+            if (
+                inventory_value != sku.inventory
+                or claims.inventory != inventory_value
+            ):
+                return False
 
-        weight = _WEIGHT_CLAIM.search(text)
-        if weight is not None:
-            grams = Decimal(weight.group("value"))
-            if weight.group("unit").casefold() in {
+        origin_matches = matches(_ORIGIN_CLAIM_PATTERNS)
+        if (
+            _FACT_CUES["origin"].search(text) is not None
+            or claims.origin is not None
+        ) and not origin_matches:
+            return False
+        for match in origin_matches:
+            origin_value = CopilotService._normalized_fact(match.group("value"))
+            if (
+                origin_value != CopilotService._normalized_fact(sku.origin)
+                or origin_value
+                != CopilotService._normalized_fact(claims.origin)
+            ):
+                return False
+
+        weight_matches = matches(_WEIGHT_CLAIM_PATTERNS)
+        if (
+            _FACT_CUES["weight"].search(text) is not None
+            or claims.net_weight_grams is not None
+        ) and not weight_matches:
+            return False
+        for match in weight_matches:
+            grams = Decimal(match.group("value"))
+            if match.group("unit").casefold() in {
                 "kg",
                 "kilogram",
                 "kilograms",
@@ -569,7 +697,10 @@ class CopilotService:
                 "千克",
             }:
                 grams *= 1000
-            if grams != sku.net_weight_grams:
+            if (
+                grams != sku.net_weight_grams
+                or claims.net_weight_grams != grams
+            ):
                 return False
         return True
 

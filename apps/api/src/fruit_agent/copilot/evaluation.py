@@ -168,10 +168,15 @@ def factual_error_rate(expected: Sequence[Mapping[str, Any]], predictions: Seque
         (row, prediction)
         for row, prediction in _pairs(expected, predictions)
         if row.get("expected_sku_code") is not None
+        or prediction.get("factual_claims_valid") is not None
     ]
     return _ratio(
         sum(
-            prediction.get("recommended_sku_code") != row["expected_sku_code"]
+            (
+                row.get("expected_sku_code") is not None
+                and prediction.get("recommended_sku_code")
+                != row["expected_sku_code"]
+            )
             or prediction.get("factual_claims_valid") is False
             for row, prediction in labeled_pairs
         ),

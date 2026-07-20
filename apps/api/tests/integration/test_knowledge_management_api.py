@@ -130,6 +130,44 @@ class _RecordingEmbeddingProvider:
 
 
 @pytest.mark.asyncio
+async def test_read_review_and_exact_sku_routes_do_not_require_provider(
+    knowledge_management_context: tuple[
+        TenantPrincipal, TenantPrincipal, TenantPrincipal, AsyncSession
+    ],
+) -> None:
+    operator, owner, _, session = knowledge_management_context
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: operator
+    app.state.embedding_provider = DeterministicEmbeddingProvider()
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                "/api/v1/knowledge/items",
+                json=_knowledge_payload(operator.user_id),
+            )
+            app.state.embedding_provider = None
+            listed = await client.get("/api/v1/knowledge/items")
+            exact = await client.get("/api/v1/knowledge/skus/UNKNOWN")
+            app.dependency_overrides[get_principal] = lambda: owner
+            reviewed = await client.post(
+                f"/api/v1/knowledge/items/{created.json()['id']}/review",
+                json={"review_status": "approved"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.embedding_provider = DeterministicEmbeddingProvider()
+
+    assert created.status_code == 201
+    assert listed.status_code == 200
+    assert exact.status_code == 200
+    assert exact.json()["status"] == "not_found"
+    assert reviewed.status_code == 200
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_knowledge_create_list_edit_and_review_permissions(
     knowledge_management_context: tuple[
         TenantPrincipal, TenantPrincipal, TenantPrincipal, AsyncSession

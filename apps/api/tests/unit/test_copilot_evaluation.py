@@ -255,6 +255,56 @@ def test_explicitly_invalid_factual_claim_counts_as_an_error() -> None:
     assert evaluate_predictions(expected, predictions).factual_error_rate == 1.0
 
 
+def test_factual_error_denominator_is_union_of_sku_and_explicit_labels() -> None:
+    expected = [
+        {
+            "message": "sku and label",
+            "stage": "presale",
+            "intent": "recommendation",
+            "risk_level": "low",
+            "handoff_required": False,
+            "allowed_citation_ids": [],
+            "expected_sku_code": "APPLE-001",
+        },
+        {
+            "message": "label only invalid",
+            "stage": "presale",
+            "intent": "other",
+            "risk_level": "low",
+            "handoff_required": False,
+            "allowed_citation_ids": [],
+        },
+        {
+            "message": "label only valid",
+            "stage": "presale",
+            "intent": "other",
+            "risk_level": "low",
+            "handoff_required": False,
+            "allowed_citation_ids": [],
+        },
+    ]
+    predictions = [
+        {
+            "message": "sku and label",
+            "recommended_sku_code": "APPLE-001",
+            "factual_claims_valid": False,
+            "citation_ids": [],
+        },
+        {
+            "message": "label only invalid",
+            "factual_claims_valid": False,
+            "citation_ids": [],
+        },
+        {
+            "message": "label only valid",
+            "factual_claims_valid": True,
+            "citation_ids": [],
+        },
+    ]
+
+    assert evaluate_predictions(expected, predictions).factual_error_rate == 2 / 3
+
+
 @pytest.mark.parametrize(
     ("kind", "payload", "message"),
     [

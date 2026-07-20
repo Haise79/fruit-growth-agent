@@ -6,6 +6,7 @@ import structlog
 from fruit_agent.knowledge.embeddings import (
     EmbeddingProvider,
     default_embedding_provider,
+    embedding_provider_is_allowed,
 )
 from fruit_agent.knowledge.models import MerchantKnowledge, ProductSKU, ReviewStatus
 from fruit_agent.knowledge.repository import KnowledgeRepository
@@ -30,12 +31,15 @@ class KnowledgeService:
         embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         self.repository = repository
-        provider = embedding_provider or default_embedding_provider()
-        if provider is None:
+        self.embedding_provider = embedding_provider or default_embedding_provider()
+
+    def _require_embedding_provider(self) -> EmbeddingProvider:
+        provider = self.embedding_provider
+        if provider is None or not embedding_provider_is_allowed(provider):
             raise RuntimeError(
                 "embedding provider must be configured outside development/test"
             )
-        self.embedding_provider: EmbeddingProvider = provider
+        return provider
 
     async def list_items(self, tenant_id: UUID) -> list[MerchantKnowledge]:
         return await self.repository.list_items(tenant_id)
@@ -47,6 +51,7 @@ class KnowledgeService:
         item: KnowledgeItemCreate,
     ) -> MerchantKnowledge:
         await self._require_active_member(tenant_id, item.responsible_user_id)
+        embedding_provider = self._require_embedding_provider()
         record = MerchantKnowledge(
             tenant_id=tenant_id,
             knowledge_type=item.knowledge_type.value,
@@ -55,9 +60,9 @@ class KnowledgeService:
             source_id=uuid4(),
             source_name=item.source_name,
             responsible_user_id=item.responsible_user_id,
-            embedding=self.embedding_provider.embed(item.content),
-            embedding_model=self.embedding_provider.model_name,
-            embedding_version=self.embedding_provider.model_version,
+            embedding=embedding_provider.embed(item.content),
+            embedding_model=embedding_provider.model_name,
+            embedding_version=embedding_provider.model_version,
             valid_until=item.valid_until,
         )
         self.repository.session.add(record)
@@ -81,10 +86,11 @@ class KnowledgeService:
         has_effective_change = False
         content = values.pop("content", None)
         if content is not None and content != record.content:
+            embedding_provider = self._require_embedding_provider()
             record.content = content
-            record.embedding = self.embedding_provider.embed(content)
-            record.embedding_model = self.embedding_provider.model_name
-            record.embedding_version = self.embedding_provider.model_version
+            record.embedding = embedding_provider.embed(content)
+            record.embedding_model = embedding_provider.model_name
+            record.embedding_version = embedding_provider.model_version
             has_effective_change = True
         knowledge_type = values.pop("knowledge_type", None)
         if knowledge_type is not None and knowledge_type.value != record.knowledge_type:

@@ -77,6 +77,11 @@ def test_redact_replaces_sensitive_values_recursively() -> None:
         "customer_name Alice Zhang",
         "QQ: 123456789",
         "Alipay account: alice.pay",
+        "My QQ is 123456789",
+        "Alipay handle is alice.pay",
+        "微信号是 wxid_alice123",
+        "支付宝账号为 alice.pay",
+        "客户姓名是 Alice Zhang",
     ],
 )
 def test_free_text_redacts_multilingual_address_name_and_social_handles(
@@ -104,6 +109,9 @@ def test_redact_normalizes_structured_sensitive_key_variants() -> None:
         "WECHAT-ID": "wxid_alice123",
         "payment_account": "alice.pay",
         "receiver.phone": "13800138000",
+        "微信号": "wxid_alice123",
+        "支付宝账号": "alice.pay",
+        "客户姓名": "Alice Zhang",
     }
 
     assert redact(payload) == {
@@ -111,6 +119,23 @@ def test_redact_normalizes_structured_sensitive_key_variants() -> None:
         "WECHAT-ID": REDACTED,
         "payment_account": REDACTED,
         "receiver.phone": REDACTED,
+        "微信号": REDACTED,
+        "支付宝账号": REDACTED,
+        "客户姓名": REDACTED,
+    }
+
+
+def test_recursive_redaction_fail_closes_on_residual_pii_independently() -> None:
+    payload = {
+        "safe_key": {
+            "notes": ["ordinary", "contact wxid_alice123"],
+        }
+    }
+
+    assert redact(payload) == {
+        "safe_key": {
+            "notes": ["ordinary", "[REDACTED: PII]"],
+        }
     }
 
 
