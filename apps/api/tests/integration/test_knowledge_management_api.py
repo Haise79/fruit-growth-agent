@@ -9,10 +9,13 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fruit_agent.app import app
-from fruit_agent.db import SessionFactory, engine, get_session
+from fruit_agent.db import SessionFactory, engine, get_session, tenant_session
 from fruit_agent.identity.dependencies import get_principal
 from fruit_agent.identity.models import Membership, Role, Tenant, User
 from fruit_agent.identity.schemas import TenantPrincipal
+from fruit_agent.knowledge.embeddings import DeterministicEmbeddingProvider
+from fruit_agent.knowledge.models import KnowledgeType
+from fruit_agent.knowledge.repository import KnowledgeRepository
 
 
 @pytest.fixture
@@ -309,4 +312,111 @@ async def test_cross_tenant_knowledge_list_is_empty_and_review_is_hidden(
     assert listed.status_code == 200
     assert listed.json() == []
     assert hidden_review.status_code == 404
+    await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"knowledge_type": "origin_story"},
+        {"source_name": "Updated grower handbook"},
+        {"responsible_user_id": "owner"},
+        {"valid_until": "extended"},
+    ],
+)
+async def test_approved_knowledge_editing_retrieval_or_provenance_resets_to_draft(
+    knowledge_management_context: tuple[
+        TenantPrincipal, TenantPrincipal, TenantPrincipal, AsyncSession
+    ],
+    changes: dict[str, str],
+) -> None:
+    operator, owner, _, session = knowledge_management_context
+    if changes.get("responsible_user_id") == "owner":
+        changes = {"responsible_user_id": str(owner.user_id)}
+    if changes.get("valid_until") == "extended":
+        changes = {"valid_until": (datetime.now(UTC) + timedelta(days=14)).isoformat()}
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: operator
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                "/api/v1/knowledge/items",
+                json=_knowledge_payload(operator.user_id),
+            )
+            assert created.status_code == 201
+            knowledge_id = created.json()["id"]
+
+            app.dependency_overrides[get_principal] = lambda: owner
+            approved = await client.post(
+                f"/api/v1/knowledge/items/{knowledge_id}/review",
+                json={"review_status": "approved"},
+            )
+            assert approved.status_code == 200
+
+            app.dependency_overrides[get_principal] = lambda: operator
+            edited = await client.patch(
+                f"/api/v1/knowledge/items/{knowledge_id}",
+                json=changes,
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert edited.status_code == 200
+    assert edited.json()["review_status"] == "draft"
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_extending_approved_knowledge_validity_makes_it_ineligible_until_reapproved(
+    knowledge_management_context: tuple[
+        TenantPrincipal, TenantPrincipal, TenantPrincipal, AsyncSession
+    ],
+) -> None:
+    operator, owner, _, session = knowledge_management_context
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: operator
+    content = "Store Fuji apples in the refrigerator."
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                "/api/v1/knowledge/items",
+                json=_knowledge_payload(operator.user_id),
+            )
+            assert created.status_code == 201
+            knowledge_id = created.json()["id"]
+
+            app.dependency_overrides[get_principal] = lambda: owner
+            approved = await client.post(
+                f"/api/v1/knowledge/items/{knowledge_id}/review",
+                json={"review_status": "approved"},
+            )
+            assert approved.status_code == 200
+
+            app.dependency_overrides[get_principal] = lambda: operator
+            extended = await client.patch(
+                f"/api/v1/knowledge/items/{knowledge_id}",
+                json={"valid_until": (datetime.now(UTC) + timedelta(days=14)).isoformat()},
+            )
+            assert extended.status_code == 200
+
+            async with tenant_session(session, operator.tenant_id):
+                rows = await KnowledgeRepository(session).search_semantic(
+                    tenant_id=operator.tenant_id,
+                    query_embedding=DeterministicEmbeddingProvider().embed(content),
+                    knowledge_types=[KnowledgeType.faq],
+                    now=datetime.now(UTC),
+                    limit=5,
+                )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert extended.json()["review_status"] == "draft"
+    assert rows == []
     await session.close()

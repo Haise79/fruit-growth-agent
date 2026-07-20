@@ -71,16 +71,22 @@ class KnowledgeService:
         responsible_user_id = values.get("responsible_user_id")
         if responsible_user_id is not None:
             await self._require_active_member(tenant_id, responsible_user_id)
+        has_effective_change = False
         content = values.pop("content", None)
-        if content is not None:
+        if content is not None and content != record.content:
             record.content = content
             record.embedding = self.embedding_provider.embed(content)
-            record.review_status = ReviewStatus.draft.value
+            has_effective_change = True
         knowledge_type = values.pop("knowledge_type", None)
-        if knowledge_type is not None:
+        if knowledge_type is not None and knowledge_type.value != record.knowledge_type:
             record.knowledge_type = knowledge_type.value
+            has_effective_change = True
         for field, value in values.items():
-            setattr(record, field, value)
+            if value != getattr(record, field):
+                setattr(record, field, value)
+                has_effective_change = True
+        if has_effective_change:
+            record.review_status = ReviewStatus.draft.value
         await self.repository.session.flush()
         await self.repository.session.refresh(record)
         return record
