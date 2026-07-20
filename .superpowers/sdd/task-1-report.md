@@ -13,6 +13,7 @@
 - `apps/api/tests/integration/test_knowledge_management_api.py`
 - `apps/api/tests/integration/test_knowledge_queries.py`
 - `apps/api/tests/unit/test_embeddings.py`
+- `apps/api/tests/unit/test_knowledge_freshness.py`
 
 `fruit_agent.app` already registered the knowledge router, so no app registration change was needed.
 
@@ -73,3 +74,26 @@ Result: `5 failed, 5 passed`, with the expected failures:
 ### Review-fix commit
 
 `9141623693064ca3e282a53a35c56cda9827693a` — hardens SKU conflict comparison, nullable update validation, responsible-member validation, and cross-tenant API coverage.
+
+## Approval-reset review-fix evidence
+
+### RED phase
+
+`D:\\Agent\\电商系统\\fruit-growth-agent\\.worktrees\\weeks-1-2-foundation\\apps\\api\\.venv\\Scripts\\python.exe -m pytest tests/integration/test_knowledge_management_api.py -q`
+
+Result: `5 failed, 7 passed`. The four retrieval/provenance/freshness edits left
+approved records approved, and extending validity left the record semantically eligible.
+
+### GREEN and full verification
+
+- Focused: `python -m pytest tests/integration/test_knowledge_management_api.py -q` — `12 passed`.
+- Full API verification: `python -m pytest tests/unit tests/integration tests/security -q` — `60 passed`.
+- `python -m ruff check src tests migrations` — `All checks passed!`.
+- `python -m mypy src tests` — `Success: no issues found in 68 source files`.
+- `git diff --check` — no whitespace errors.
+
+### Approval-reset review-fix commit
+
+`7ee7ef7e9f5d323c241f2a821e811600a14ca997` — resets approved knowledge to
+draft only when a persisted content, retrieval, provenance, or freshness value
+actually changes; unchanged-value patches preserve approval.
