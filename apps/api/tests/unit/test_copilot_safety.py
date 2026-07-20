@@ -1,0 +1,112 @@
+import pytest
+
+from fruit_agent.copilot.safety import classify_customer_message, merge_model_risk
+from fruit_agent.copilot.schemas import CopilotIntent, CopilotRisk, CopilotStage
+
+
+def test_health_allergy_or_disease_requires_handoff() -> None:
+    result = classify_customer_message("孩子有苹果过敏和糖尿病，可以吃这个吗？")
+
+    assert result.stage is CopilotStage.presale
+    assert result.intent is CopilotIntent.health_safety
+    assert result.risk is CopilotRisk.critical
+    assert result.requires_handoff is True
+
+
+def test_food_safety_concern_requires_handoff() -> None:
+    result = classify_customer_message("苹果有异味，吃起来像变质了，安全吗？")
+
+    assert result.intent is CopilotIntent.health_safety
+    assert result.risk is CopilotRisk.critical
+    assert result.requires_handoff is True
+
+
+def test_bulk_spoilage_or_public_opinion_threat_requires_handoff() -> None:
+    result = classify_customer_message("整批礼盒都发霉了，不处理我就发到微博曝光")
+
+    assert result.stage is CopilotStage.aftersale
+    assert result.risk is CopilotRisk.high
+    assert result.requires_handoff is True
+
+
+def test_bulk_spoilage_without_public_threat_requires_handoff() -> None:
+    result = classify_customer_message("客户反馈五十箱苹果整批腐烂")
+
+    assert result.risk is CopilotRisk.high
+    assert result.requires_handoff is True
+
+
+def test_public_opinion_threat_without_bulk_spoilage_requires_handoff() -> None:
+    result = classify_customer_message("不处理我就找媒体曝光并送上热搜")
+
+    assert result.intent is CopilotIntent.complaint
+    assert result.risk is CopilotRisk.high
+    assert result.requires_handoff is True
+
+
+def test_regulator_complaint_requires_handoff() -> None:
+    result = classify_customer_message("我要向市场监管局和消协投诉你们")
+
+    assert result.intent is CopilotIntent.complaint
+    assert result.risk is CopilotRisk.critical
+    assert result.requires_handoff is True
+
+
+def test_over_policy_compensation_or_refund_dispute_requires_handoff() -> None:
+    result = classify_customer_message("你们的退款方案我不同意，必须十倍赔偿")
+
+    assert result.intent is CopilotIntent.refund
+    assert result.risk is CopilotRisk.high
+    assert result.requires_handoff is True
+
+
+def test_personal_injury_requires_handoff() -> None:
+    result = classify_customer_message("吃完后摔倒受伤住院了，医药费怎么办")
+
+    assert result.intent is CopilotIntent.health_safety
+    assert result.risk is CopilotRisk.critical
+    assert result.requires_handoff is True
+
+
+def test_knowledge_conflict_requires_handoff() -> None:
+    result = classify_customer_message(
+        "这款苹果多少钱？",
+        knowledge_conflict=True,
+    )
+
+    assert result.risk is CopilotRisk.high
+    assert result.requires_handoff is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "My child has an apple allergy and diabetes. Is it safe?",
+        "These apples smell rotten and may cause food poisoning.",
+        "Fifty boxes arrived spoiled.",
+        "I will report this to the market regulator.",
+        "I reject the refund offer and demand compensation above policy.",
+        "I was injured and hospitalized after eating this.",
+    ],
+)
+def test_english_mandatory_risk_language_requires_handoff(message: str) -> None:
+    result = classify_customer_message(message)
+
+    assert result.risk in {CopilotRisk.high, CopilotRisk.critical}
+    assert result.requires_handoff is True
+
+
+@pytest.mark.parametrize(
+    ("rule_risk", "model_risk", "expected"),
+    [
+        (CopilotRisk.low, CopilotRisk.medium, CopilotRisk.medium),
+        (CopilotRisk.medium, CopilotRisk.low, CopilotRisk.medium),
+        (CopilotRisk.high, CopilotRisk.critical, CopilotRisk.critical),
+    ],
+)
+def test_model_risk_can_upgrade_but_never_downgrade(
+    rule_risk: CopilotRisk,
+    model_risk: CopilotRisk,
+    expected: CopilotRisk,
+) -> None:
+    assert merge_model_risk(rule_risk, model_risk) is expected

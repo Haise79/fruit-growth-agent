@@ -34,3 +34,42 @@ class GatewaySuggestion(AgentSuggestion):
 class SuggestionRequest(BaseModel):
     prompt: dict[str, object]
     knowledge_ids: list[UUID] = Field(default_factory=list)
+
+
+class CopilotAgentSuggestion(BaseModel):
+    suggestion_text: str = Field(min_length=1, max_length=4000)
+    referenced_knowledge_ids: list[UUID] = Field(default_factory=list)
+    recommended_sku_code: str | None = Field(default=None, min_length=1, max_length=128)
+    confidence_score: float = Field(ge=0, le=1)
+    risk_tip: str | None = Field(default=None, max_length=1000)
+
+
+class CopilotAgentOutput(BaseModel):
+    stage: Literal["presale", "aftersale", "unknown"]
+    intent: Literal[
+        "product_info",
+        "recommendation",
+        "gift",
+        "delivery",
+        "storage",
+        "damage",
+        "refund",
+        "complaint",
+        "health_safety",
+        "other",
+    ]
+    risk_level: Literal["low", "medium", "high", "critical"]
+    suggestions: list[CopilotAgentSuggestion] = Field(max_length=3)
+
+
+class CopilotProviderResponse(BaseModel):
+    output: CopilotAgentOutput
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+
+
+class CopilotGatewayOutput(CopilotAgentOutput):
+    model_name: str
+    degraded: bool
+    retry_count: int = Field(ge=0)
+    estimated_cost: float = Field(ge=0)
