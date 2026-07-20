@@ -69,12 +69,13 @@ async def test_exact_sku_query_and_semantic_type_allowlist(
                     source_id=uuid4(),
                     valid_until=future,
                 ),
-                MerchantKnowledge(
+                    MerchantKnowledge(
                     tenant_id=tenant_a,
                     knowledge_type=KnowledgeType.faq.value,
                     review_status=ReviewStatus.approved.value,
-                    content="苹果如何保存",
-                    source_id=uuid4(),
+                        content="苹果如何保存",
+                        source_id=uuid4(),
+                        source_name="Grower handbook",
                     embedding=embedding,
                     valid_until=future,
                 ),
@@ -82,8 +83,9 @@ async def test_exact_sku_query_and_semantic_type_allowlist(
                     tenant_id=tenant_a,
                     knowledge_type=KnowledgeType.product_fact.value,
                     review_status=ReviewStatus.approved.value,
-                    content="商品价格事实不可语义检索",
-                    source_id=uuid4(),
+                        content="商品价格事实不可语义检索",
+                        source_id=uuid4(),
+                        source_name="Pricing feed",
                     embedding=embedding,
                     valid_until=future,
                 ),
@@ -110,4 +112,51 @@ async def test_exact_sku_query_and_semantic_type_allowlist(
     assert sku_rows[0].name == "A 苹果"
     assert [row.knowledge_type for row in semantic_rows] == [
         KnowledgeType.faq.value
+    ]
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_fails_closed_for_unapproved_or_expired_knowledge(
+    knowledge_database: None,
+) -> None:
+    del knowledge_database
+    tenant_id = uuid4()
+    now = datetime.now(UTC)
+    embedding = [1.0] + [0.0] * (EMBEDDING_DIMENSION - 1)
+
+    async with SessionFactory() as seed:
+        seed.add(Tenant(id=tenant_id, name="Tenant", valid_until=now + timedelta(days=1)))
+        await seed.flush()
+        for status, valid_until in [
+            (ReviewStatus.approved, now + timedelta(hours=1)),
+            (ReviewStatus.draft, now + timedelta(hours=1)),
+            (ReviewStatus.rejected, now + timedelta(hours=1)),
+            (ReviewStatus.approved, now - timedelta(seconds=1)),
+        ]:
+            seed.add(
+                MerchantKnowledge(
+                    tenant_id=tenant_id,
+                    knowledge_type=KnowledgeType.faq.value,
+                    review_status=status.value,
+                    content=status.value,
+                    source_id=uuid4(),
+                    source_name="Trusted source",
+                    embedding=embedding,
+                    valid_until=valid_until,
+                )
+            )
+        await seed.commit()
+
+    async with SessionFactory() as session:
+        async with tenant_session(session, tenant_id):
+            rows = await KnowledgeRepository(session).search_semantic(
+                tenant_id=tenant_id,
+                query_embedding=embedding,
+                knowledge_types=[KnowledgeType.faq],
+                now=now,
+                limit=5,
+            )
+
+    assert [(row.review_status, row.content) for row in rows] == [
+        (ReviewStatus.approved.value, ReviewStatus.approved.value)
     ]

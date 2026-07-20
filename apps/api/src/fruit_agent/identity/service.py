@@ -19,6 +19,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
             "members:write",
             "knowledge:read",
             "knowledge:write",
+            "knowledge:review",
             "imports:write",
             "approval:request",
             "approval:decide",
@@ -31,6 +32,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
             "members:write",
             "knowledge:read",
             "knowledge:write",
+            "knowledge:review",
             "imports:write",
             "audit:read",
         }

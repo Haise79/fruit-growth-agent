@@ -35,6 +35,27 @@ class KnowledgeRepository:
         )
         return list(rows)
 
+    async def list_items(self, tenant_id: UUID) -> list[MerchantKnowledge]:
+        rows = await self.session.scalars(
+            select(MerchantKnowledge)
+            .where(MerchantKnowledge.tenant_id == tenant_id)
+            .order_by(MerchantKnowledge.created_at.desc())
+        )
+        return list(rows)
+
+    async def get_item(
+        self,
+        tenant_id: UUID,
+        knowledge_id: UUID,
+    ) -> MerchantKnowledge | None:
+        rows = await self.session.scalars(
+            select(MerchantKnowledge).where(
+                MerchantKnowledge.tenant_id == tenant_id,
+                MerchantKnowledge.id == knowledge_id,
+            )
+        )
+        return rows.one_or_none()
+
     async def search_semantic(
         self,
         *,

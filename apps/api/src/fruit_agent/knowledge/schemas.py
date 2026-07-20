@@ -1,8 +1,11 @@
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from fruit_agent.knowledge.models import KnowledgeType, ReviewStatus
 
 
 class ProductSKURead(BaseModel):
@@ -15,6 +18,51 @@ class ProductSKURead(BaseModel):
     price: Decimal
     inventory: int
     source_id: UUID
+    variety: str | None = None
+    origin: str | None = None
+    orchard: str | None = None
+    taste: str | None = None
+    ripeness: str | None = None
+    specification: str | None = None
+    net_weight_grams: int | None = None
+    sales_regions: list[str] | None = None
+    shipping_eta: str | None = None
+
+
+class KnowledgeItemCreate(BaseModel):
+    knowledge_type: KnowledgeType
+    content: str = Field(min_length=1)
+    source_name: str = Field(min_length=1, max_length=300)
+    responsible_user_id: UUID
+    valid_until: datetime
+
+
+class KnowledgeItemUpdate(BaseModel):
+    knowledge_type: KnowledgeType | None = None
+    content: str | None = Field(default=None, min_length=1)
+    source_name: str | None = Field(default=None, min_length=1, max_length=300)
+    responsible_user_id: UUID | None = None
+    valid_until: datetime | None = None
+
+
+class KnowledgeReviewRequest(BaseModel):
+    review_status: Literal[ReviewStatus.approved, ReviewStatus.rejected]
+
+
+class KnowledgeItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    tenant_id: UUID
+    knowledge_type: KnowledgeType
+    review_status: ReviewStatus
+    content: str
+    source_id: UUID
+    source_name: str
+    responsible_user_id: UUID | None
+    valid_until: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class ExactFactResult(BaseModel):

@@ -3,7 +3,8 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
-from sqlalchemy import CheckConstraint, Numeric, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from fruit_agent.common.models import Base, TenantOwnedMixin
@@ -45,6 +46,15 @@ class ProductSKU(TenantOwnedMixin, Base):
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     inventory: Mapped[int] = mapped_column(nullable=False)
     source_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    variety: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    origin: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    orchard: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    taste: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    ripeness: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    specification: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    net_weight_grams: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sales_regions: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    shipping_eta: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 
 class MerchantKnowledge(TenantOwnedMixin, Base):
@@ -65,6 +75,13 @@ class MerchantKnowledge(TenantOwnedMixin, Base):
     )
     content: Mapped[str] = mapped_column(String, nullable=False)
     source_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    source_name: Mapped[str] = mapped_column(
+        String(300),
+        nullable=False,
+        default="legacy",
+        server_default="legacy",
+    )
+    responsible_user_id: Mapped[UUID | None] = mapped_column(nullable=True, index=True)
     embedding: Mapped[list[float]] = mapped_column(
         Vector(EMBEDDING_DIMENSION),
         nullable=False,
