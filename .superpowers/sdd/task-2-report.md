@@ -287,3 +287,6 @@ Round 2 review-fix implementation commit:
 
 No unresolved round 3 concerns. The rules remain intentionally conservative:
 uncertain safety/evidence is handed off rather than drafted.
+
+Round 3 review-fix implementation commit:
+`f47a50ba18a5ea3913f6834f509ad7dc4050e331`.
