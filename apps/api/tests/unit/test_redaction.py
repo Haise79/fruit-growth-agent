@@ -1,4 +1,8 @@
+import pytest
+
 from fruit_agent.common.redaction import REDACTED, redact, redact_text
+from fruit_agent.copilot.safety import classify_customer_message
+from fruit_agent.copilot.schemas import CopilotRisk
 
 
 def test_free_text_redacts_address_landline_card_passport_and_existing_pii() -> None:
@@ -22,6 +26,27 @@ def test_free_text_redacts_address_landline_card_passport_and_existing_pii() -> 
     ):
         assert sensitive not in result
     assert result.count(REDACTED) >= 7
+
+
+@pytest.mark.parametrize("punctuation", ["。", "！", "？", "!", "?"])
+def test_unlabeled_address_redaction_stops_at_sentence_punctuation(
+    punctuation: str,
+) -> None:
+    result = redact_text(
+        f"寄到上海市浦东新区世纪大道100号{punctuation}苹果发霉了"
+    )
+
+    assert "上海市浦东新区世纪大道100号" not in result
+    assert f"{punctuation}苹果发霉了" in result
+
+
+def test_address_redaction_preserves_following_food_safety_handoff_clause() -> None:
+    redacted = redact_text("送到家。苹果发霉了")
+    classification = classify_customer_message(redacted)
+
+    assert redacted == f"送到{REDACTED}。苹果发霉了"
+    assert classification.risk is CopilotRisk.critical
+    assert classification.requires_handoff is True
 
 
 def test_redact_replaces_sensitive_values_recursively() -> None:

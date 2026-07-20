@@ -33,6 +33,46 @@ def test_storage_topic_agreement_is_relevant_without_exact_phrase_overlap() -> N
     )
 
 
+def test_english_store_verb_rejects_retail_store_staff_document() -> None:
+    assert (
+        is_relevant_narrative(
+            "How should I store apples?",
+            "Our store staff schedule is updated weekly.",
+        )
+        is False
+    )
+
+
+def test_english_storage_domain_phrases_remain_relevant() -> None:
+    assert (
+        is_relevant_narrative(
+            "How should I store apples?",
+            "Apples should be refrigerated to keep fresh.",
+        )
+        is True
+    )
+
+
+def test_chinese_taste_query_rejects_unrelated_dessert_sweetness_document() -> None:
+    assert (
+        is_relevant_narrative(
+            "哪款苹果更清脆，值得推荐？",
+            "甜品店本周更新甜度测试和员工排班。",
+        )
+        is False
+    )
+
+
+def test_chinese_multi_character_taste_evidence_remains_relevant() -> None:
+    assert (
+        is_relevant_narrative(
+            "哪款苹果更清脆，值得推荐？",
+            "红富士苹果酸甜清脆，适合喜欢爽脆口感的顾客。",
+        )
+        is True
+    )
+
+
 @pytest.mark.asyncio
 async def test_sku_evidence_uses_validated_snapshot_without_requery() -> None:
     tenant_id = uuid4()

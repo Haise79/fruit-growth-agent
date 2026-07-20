@@ -223,3 +223,67 @@ intentionally conservative and hand off/redact when uncertain.
 
 Round 2 review-fix implementation commit:
 `fc34059bc8fa6c76e5c2fe8a22b07e4cd0796695`.
+
+## Independent review round 3 fixes
+
+### RED evidence
+
+1. English mandatory handoff:
+   - Added the exact reviewer examples `I have asthma; can I eat this?` and
+     `I have diarrhea and vomiting after eating these`, plus common English
+     chronic-disease and adverse-reaction variants.
+   - Focused result: `5 failed, 2 passed, 27 deselected`. Existing generic
+     `disease` examples passed; asthma, digestive symptoms, nausea/pain,
+     fever/dizziness/rash, and breathing/swelling variants exposed gaps.
+2. Domain-specific relevance:
+   - Added the exact collision `How should I store apples?` versus
+     `Our store staff schedule is updated weekly.`
+   - Added an unrelated Chinese dessert `甜度`/staff-schedule collision and
+     positive apple refrigeration and multi-character taste examples.
+   - Focused result: `2 failed, 2 passed, 3 deselected`; raw `store` and
+     single-character Chinese taste anchors accepted the unrelated documents.
+3. Sentence-bounded address redaction:
+   - Added every required sentence terminator (`。！？!?`) and the exact
+     `送到家。苹果发霉了` regression.
+   - Focused result: `6 failed, 3 deselected`; address redaction consumed the
+     following risk sentence and prevented deterministic food-safety handoff.
+
+### GREEN evidence
+
+- English/Chinese deterministic safety suite: `34 passed`.
+- Evidence relevance unit plus realistic integration regression: `8 passed`.
+- Redaction unit/security suites: `10 passed`.
+- Consolidated affected suites:
+  `python -m pytest -q tests/unit/test_copilot_safety.py
+  tests/unit/test_copilot_evidence.py tests/unit/test_redaction.py
+  tests/security/test_prompt_redaction.py
+  tests/integration/test_copilot_api.py` — `66 passed in 5.67s`.
+
+### Round 3 full verification
+
+- `python -m pytest -q` — `125 passed in 12.41s`.
+- `python -m ruff check .` — `All checks passed!`.
+- `python -m mypy src tests` —
+  `Success: no issues found in 79 source files`.
+- `python -m alembic upgrade head` — upgraded through `0006`.
+- `python -m alembic downgrade base` — downgraded cleanly to base.
+- `git diff --check` — no whitespace errors.
+
+### Round 3 self-review
+
+- English deterministic safety vocabulary now mirrors the Chinese disease and
+  adverse-reaction families, including asthma, chronic organ disease, immune
+  disorders, digestive symptoms, fever/rash, and breathing/swelling symptoms.
+- English storage matching uses explicit storage, refrigeration, shelf-life,
+  and keep-fresh language; `store/stored/storing` counts only near a
+  fruit/produce term.
+- Chinese taste matching uses multi-character domain phrases (`甜度`, `口感`,
+  `酸甜`, `清脆`, `酥脆`, `脆甜`, `爽脆`). Recommendation/storage matches also
+  require fruit context on both query and evidence, rejecting retail-store and
+  dessert scheduling documents.
+- Unlabeled and labeled address redaction stops at Chinese/English sentence
+  punctuation as well as commas, semicolons, and newlines. Following safety
+  clauses remain available to deterministic classification.
+
+No unresolved round 3 concerns. The rules remain intentionally conservative:
+uncertain safety/evidence is handed off rather than drafted.

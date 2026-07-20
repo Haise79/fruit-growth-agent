@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -42,9 +43,11 @@ _TOPIC_ANCHORS: dict[str, tuple[str, ...]] = {
         "冰箱",
         "常温",
         "storage",
-        "store",
         "refrigerat",
+        "shelf life",
+        "shelf-life",
         "keep fresh",
+        "freshness",
     ),
     "delivery": (
         "发货",
@@ -62,9 +65,12 @@ _TOPIC_ANCHORS: dict[str, tuple[str, ...]] = {
         "选择",
         "哪款",
         "口感",
-        "甜",
-        "脆",
-        "酸",
+        "甜度",
+        "酸甜",
+        "清脆",
+        "酥脆",
+        "脆甜",
+        "爽脆",
         "recommend",
         "choose",
         "taste",
@@ -119,20 +125,47 @@ _TOPIC_ANCHORS: dict[str, tuple[str, ...]] = {
         "safe to eat",
     ),
 }
+_PRODUCT_CONTEXT = re.compile(
+    r"苹果|水果|红富士|果品|果实|梨|橙|柑|桃|葡萄|莓|"
+    r"\b(?:apples?|fruits?|pears?|oranges?|peaches?|grapes?|"
+    r"berries|produce)\b",
+    re.IGNORECASE,
+)
+_STORE_NEAR_PRODUCT = re.compile(
+    r"(?:\b(?:store|stored|storing)\b.{0,40}"
+    r"\b(?:apples?|fruits?|pears?|oranges?|peaches?|grapes?|"
+    r"berries|produce)\b|"
+    r"\b(?:apples?|fruits?|pears?|oranges?|peaches?|grapes?|"
+    r"berries|produce)\b.{0,40}\b(?:store|stored|storing)\b)",
+    re.IGNORECASE,
+)
+_PRODUCT_SCOPED_TOPICS = {"recommendation", "storage"}
 
 
 def _matching_topics(text: str) -> set[str]:
     normalized = text.casefold()
-    return {
+    topics = {
         topic
         for topic, anchors in _TOPIC_ANCHORS.items()
         if any(anchor in normalized for anchor in anchors)
     }
+    if _STORE_NEAR_PRODUCT.search(text):
+        topics.add("storage")
+    return topics
 
 
 def is_relevant_narrative(message: str, content: str) -> bool:
     message_topics = _matching_topics(message)
-    return bool(message_topics and message_topics & _matching_topics(content))
+    shared_topics = message_topics & _matching_topics(content)
+    if not shared_topics:
+        return False
+    unscoped_topics = shared_topics - _PRODUCT_SCOPED_TOPICS
+    if unscoped_topics:
+        return True
+    return bool(
+        _PRODUCT_CONTEXT.search(message)
+        and _PRODUCT_CONTEXT.search(content)
+    )
 
 
 class CopilotService:

@@ -103,6 +103,44 @@ def test_industry_regulator_complaint_requires_handoff() -> None:
     assert result.requires_handoff is True
 
 
+def test_english_asthma_question_requires_handoff() -> None:
+    result = classify_customer_message("I have asthma; can I eat this?")
+
+    assert result.intent is CopilotIntent.health_safety
+    assert result.risk is CopilotRisk.critical
+    assert result.requires_handoff is True
+
+
+def test_english_adverse_digestive_reaction_requires_handoff() -> None:
+    result = classify_customer_message(
+        "I have diarrhea and vomiting after eating these"
+    )
+
+    assert result.stage is CopilotStage.aftersale
+    assert result.intent is CopilotIntent.health_safety
+    assert result.risk is CopilotRisk.critical
+    assert result.requires_handoff is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "I have chronic kidney disease. Is this safe to eat?",
+        "Can someone with heart disease or an immune disorder eat this?",
+        "I developed nausea and stomach pain after eating the fruit.",
+        "After eating these I have a fever, dizziness, and a rash.",
+        "My throat is swelling and I have difficulty breathing.",
+    ],
+)
+def test_common_english_disease_and_adverse_reaction_variants_fail_closed(
+    message: str,
+) -> None:
+    result = classify_customer_message(message)
+
+    assert result.risk in {CopilotRisk.high, CopilotRisk.critical}
+    assert result.requires_handoff is True
+
+
 @pytest.mark.parametrize(
     "message",
     [
