@@ -220,3 +220,6 @@ tests, and Task 2 report were also updated.
 
 No unresolved round 2 concerns. Topic matching and PII detection remain
 intentionally conservative and hand off/redact when uncertain.
+
+Round 2 review-fix implementation commit:
+`fc34059bc8fa6c76e5c2fe8a22b07e4cd0796695`.
