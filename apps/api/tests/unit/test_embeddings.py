@@ -1,11 +1,12 @@
-from unittest.mock import AsyncMock
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
 from fruit_agent.config import get_settings
 from fruit_agent.knowledge.embeddings import DeterministicEmbeddingProvider
+from fruit_agent.knowledge.models import KnowledgeType
 from fruit_agent.knowledge.repository import KnowledgeRepository
 from fruit_agent.knowledge.schemas import KnowledgeItemCreate
 from fruit_agent.knowledge.service import KnowledgeService
@@ -64,7 +65,7 @@ async def test_production_rejects_deterministic_embedding_for_writes(
             ).create_item(
                 tenant_id=uuid4(),
                 item=KnowledgeItemCreate(
-                    knowledge_type="faq",
+                    knowledge_type=KnowledgeType.faq,
                     content="Safe content",
                     source_name="Source",
                     responsible_user_id=uuid4(),

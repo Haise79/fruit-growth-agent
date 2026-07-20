@@ -8,7 +8,10 @@ from fruit_agent.db import get_session, tenant_session
 from fruit_agent.identity.dependencies import require_permissions
 from fruit_agent.identity.schemas import TenantPrincipal
 from fruit_agent.knowledge.dependencies import get_embedding_provider
-from fruit_agent.knowledge.embeddings import EmbeddingProvider
+from fruit_agent.knowledge.embeddings import (
+    EmbeddingProvider,
+    embedding_provider_is_allowed,
+)
 from fruit_agent.knowledge.models import ReviewStatus
 from fruit_agent.knowledge.repository import KnowledgeRepository
 from fruit_agent.knowledge.schemas import (
@@ -58,7 +61,9 @@ async def create_knowledge_item(
         Depends(get_embedding_provider),
     ],
 ) -> KnowledgeItemRead:
-    if embedding_provider is None:
+    if embedding_provider is None or not embedding_provider_is_allowed(
+        embedding_provider
+    ):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="embedding provider is not configured",
@@ -94,7 +99,9 @@ async def update_knowledge_item(
         Depends(get_embedding_provider),
     ],
 ) -> KnowledgeItemRead:
-    if embedding_provider is None:
+    if embedding_provider is None or not embedding_provider_is_allowed(
+        embedding_provider
+    ):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="embedding provider is not configured",

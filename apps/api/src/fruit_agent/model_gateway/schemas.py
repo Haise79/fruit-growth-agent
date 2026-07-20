@@ -38,11 +38,11 @@ class SuggestionRequest(BaseModel):
 
 
 class CopilotSKUFactClaims(BaseModel):
-    price: Decimal | None = Field(default=None, ge=0)
-    currency: str | None = Field(default=None, min_length=1, max_length=16)
-    inventory: int | None = Field(default=None, ge=0)
-    origin: str | None = Field(default=None, min_length=1, max_length=300)
-    net_weight_grams: int | None = Field(default=None, ge=0)
+    price: Decimal = Field(ge=0)
+    currency: str = Field(min_length=1, max_length=16)
+    inventory: int = Field(ge=0)
+    origin: str | None = Field(max_length=300)
+    net_weight_grams: int | None = Field(ge=0)
     shipping_eta: str | None = Field(default=None, min_length=1, max_length=200)
 
 
@@ -52,9 +52,7 @@ class CopilotAgentSuggestion(BaseModel):
     recommended_sku_code: str | None = Field(default=None, min_length=1, max_length=128)
     confidence_score: float = Field(ge=0, le=1)
     risk_tip: str | None = Field(default=None, max_length=1000)
-    fact_claims: CopilotSKUFactClaims = Field(
-        default_factory=CopilotSKUFactClaims
-    )
+    fact_claims: CopilotSKUFactClaims
 
 
 class CopilotAgentOutput(BaseModel):

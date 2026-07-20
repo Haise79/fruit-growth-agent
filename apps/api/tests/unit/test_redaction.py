@@ -82,6 +82,12 @@ def test_redact_replaces_sensitive_values_recursively() -> None:
         "微信号是 wxid_alice123",
         "支付宝账号为 alice.pay",
         "客户姓名是 Alice Zhang",
+        "social handle is alice_123",
+        "payment account is alice.pay",
+        "扣扣号是 123456789",
+        "顾客姓名是 Alice Zhang",
+        "收件人姓名为 Bob Li",
+        "Alipay username is alice.pay",
     ],
 )
 def test_free_text_redacts_multilingual_address_name_and_social_handles(
@@ -112,6 +118,11 @@ def test_redact_normalizes_structured_sensitive_key_variants() -> None:
         "微信号": "wxid_alice123",
         "支付宝账号": "alice.pay",
         "客户姓名": "Alice Zhang",
+        "QQ号": "123456789",
+        "扣扣号": "123456789",
+        "支付宝账户": "alice.pay",
+        "顾客姓名": "Alice Zhang",
+        "收件人姓名": "Bob Li",
     }
 
     assert redact(payload) == {
@@ -122,6 +133,11 @@ def test_redact_normalizes_structured_sensitive_key_variants() -> None:
         "微信号": REDACTED,
         "支付宝账号": REDACTED,
         "客户姓名": REDACTED,
+        "QQ号": REDACTED,
+        "扣扣号": REDACTED,
+        "支付宝账户": REDACTED,
+        "顾客姓名": REDACTED,
+        "收件人姓名": REDACTED,
     }
 
 
@@ -137,6 +153,21 @@ def test_recursive_redaction_fail_closes_on_residual_pii_independently() -> None
             "notes": ["ordinary", "[REDACTED: PII]"],
         }
     }
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Alipay username is",
+        "payment account is unknown",
+        "收件人姓名为",
+        "扣扣号是 unavailable",
+    ],
+)
+def test_sensitive_label_without_reliably_parsed_value_fails_closed(
+    message: str,
+) -> None:
+    assert redact(message) == "[REDACTED: PII]"
 
 
 def test_redact_does_not_mutate_input() -> None:

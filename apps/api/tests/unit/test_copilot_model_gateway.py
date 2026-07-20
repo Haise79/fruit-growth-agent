@@ -1,18 +1,42 @@
 import asyncio
+from decimal import Decimal
 from time import perf_counter
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from fruit_agent.model_gateway.schemas import (
     CopilotAgentOutput,
     CopilotAgentSuggestion,
     CopilotProviderResponse,
+    CopilotSKUFactClaims,
     ModelProfile,
 )
 from fruit_agent.model_gateway.service import ModelGateway, ProviderBinding
 from fruit_agent.model_gateway.service import ProviderUnavailableError
+
+
+def test_copilot_suggestion_requires_complete_structured_fact_claims() -> None:
+    with pytest.raises(ValidationError):
+        CopilotAgentSuggestion.model_validate(
+            {
+                "suggestion_text": "Model free text",
+                "recommended_sku_code": "APPLE-001",
+                "confidence_score": 0.9,
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        CopilotAgentSuggestion.model_validate(
+            {
+                "suggestion_text": "Model free text",
+                "recommended_sku_code": "APPLE-001",
+                "confidence_score": 0.9,
+                "fact_claims": {"price": "29.90"},
+            }
+        )
 
 
 @pytest.mark.asyncio
@@ -30,6 +54,13 @@ async def test_typed_copilot_output_uses_quality_gated_provider_and_redacts_mess
                     recommended_sku_code="APPLE-001",
                     confidence_score=0.91,
                     risk_tip="确认收货地区。",
+                    fact_claims=CopilotSKUFactClaims(
+                        price=Decimal("29.90"),
+                        currency="CNY",
+                        inventory=100,
+                        origin="山东烟台",
+                        net_weight_grams=2500,
+                    ),
                 )
             ],
         ),

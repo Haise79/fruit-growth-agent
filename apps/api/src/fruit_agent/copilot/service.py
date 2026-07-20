@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
 
@@ -12,9 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fruit_agent.common.errors import DomainError
 from fruit_agent.common.redaction import (
     PII_PLACEHOLDER,
-    contains_supported_pii,
     redact,
-    redact_text,
 )
 from fruit_agent.copilot.models import (
     CopilotCase,
@@ -46,10 +43,7 @@ from fruit_agent.knowledge.models import KnowledgeType, MerchantKnowledge
 from fruit_agent.knowledge.repository import KnowledgeRepository
 from fruit_agent.knowledge.schemas import ProductSKURead
 from fruit_agent.knowledge.service import KnowledgeService
-from fruit_agent.model_gateway.schemas import (
-    CopilotAgentSuggestion,
-    CopilotSKUFactClaims,
-)
+from fruit_agent.model_gateway.schemas import CopilotAgentSuggestion
 from fruit_agent.model_gateway.service import (
     InvalidModelOutputError,
     ModelGateway,
@@ -169,65 +163,6 @@ _PRODUCT_AUXILIARY_STORED = re.compile(
     re.IGNORECASE,
 )
 _PRODUCT_SCOPED_TOPICS = {"recommendation", "storage"}
-_PRICE_CLAIM = re.compile(
-    r"(?i)(?:price|cost|售价|价格)\s*(?:is|:|：|为)?\s*"
-    r"(?P<currency>CNY|RMB|USD|[$¥￥])?\s*"
-    r"(?P<value>\d+(?:\.\d{1,2})?)"
-)
-_INVENTORY_CLAIM = re.compile(
-    r"(?i)(?:inventory|stock|库存)\s*(?:is|:|：|为|有)?\s*"
-    r"(?P<value>\d+)"
-)
-_ORIGIN_CLAIM = re.compile(
-    r"(?i)(?:origin|产地)\s*(?:is|:|：|为|来自)?\s*"
-    r"(?P<value>[A-Za-z\u4e00-\u9fff][^,.;，。；\n]{0,80})"
-)
-_WEIGHT_CLAIM = re.compile(
-    r"(?i)(?:net\s*weight|weight|净重|重量)\s*(?:is|:|：|为)?\s*"
-    r"(?P<value>\d+(?:\.\d+)?)\s*"
-    r"(?P<unit>kg|kilograms?|g|grams?|公斤|千克|克)\b"
-)
-
-
-_PRICE_CLAIM_PATTERNS = (
-    _PRICE_CLAIM,
-    re.compile(
-        r"(?i)(?P<currency>CNY|RMB|USD|[$¥￥])\s*"
-        r"(?P<value>\d+(?:\.\d{1,2})?)"
-    ),
-    re.compile(
-        r"(?i)(?:今天)?(?:只要|售价|价格|price|cost)?\s*"
-        r"(?P<value>\d+(?:\.\d{1,2})?)\s*"
-        r"(?P<currency>元|人民币|CNY|RMB|USD)"
-    ),
-)
-_INVENTORY_CLAIM_PATTERNS = (
-    _INVENTORY_CLAIM,
-    re.compile(
-        r"(?i)(?P<value>\d+)\s*(?:units?\s+)?(?:in\s+stock|left)\b"
-    ),
-)
-_ORIGIN_CLAIM_PATTERNS = (
-    _ORIGIN_CLAIM,
-    re.compile(
-        r"(?i)(?:come(?:s)?\s+from|来自)\s*"
-        r"(?P<value>[A-Za-z\u4e00-\u9fff][^,.;，。；\n]{0,80})"
-    ),
-)
-_WEIGHT_CLAIM_PATTERNS = (
-    _WEIGHT_CLAIM,
-    re.compile(
-        r"(?i)(?P<value>\d+(?:\.\d+)?)\s*"
-        r"(?P<unit>kg|kilograms?|g|grams?|公斤|千克|克)"
-        r"\s*(?:pack|package|包装)"
-    ),
-)
-_FACT_CUES = {
-    "price": re.compile(r"(?i)price|cost|售价|价格|只要|[$¥￥]|元|人民币"),
-    "inventory": re.compile(r"(?i)inventory|stock|库存"),
-    "origin": re.compile(r"(?i)origin|come(?:s)?\s+from|来自"),
-    "weight": re.compile(r"(?i)net\s*weight|weight|pack|重量|净重|包装"),
-}
 
 
 def _matching_topics(text: str) -> set[str]:
@@ -289,10 +224,8 @@ class CopilotService:
     ) -> CopilotCase:
         checked_at = now or datetime.now(UTC)
         raw_classification = classify_customer_message(request.message)
-        redacted_message = redact_text(request.message)
-        residual_pii = contains_supported_pii(redacted_message)
-        if residual_pii:
-            redacted_message = PII_PLACEHOLDER
+        redacted_message = cast(str, redact(request.message))
+        residual_pii = redacted_message == PII_PLACEHOLDER
         classification = merge_safety_classifications(
             raw_classification,
             classify_customer_message(redacted_message),
@@ -395,10 +328,15 @@ class CopilotService:
             else CopilotCaseStatus.suggestions_ready.value
         )
         for rank, draft in enumerate(output.suggestions[:3], start=1):
+            verified_sku = next(
+                sku
+                for sku in skus
+                if sku.sku_code == draft.recommended_sku_code
+            )
             suggestion = CopilotSuggestion(
                 tenant_id=tenant_id,
                 case_id=case.id,
-                original_text=draft.suggestion_text,
+                original_text=self._render_verified_sku_facts(verified_sku),
                 rank=rank,
                 recommended_sku_code=draft.recommended_sku_code,
                 confidence=draft.confidence_score,
@@ -573,24 +511,19 @@ class CopilotService:
         sku: ProductSKURead,
     ) -> bool:
         claims = suggestion.fact_claims
-        if claims.price is not None and claims.price != sku.price:
+        if claims.price != sku.price:
+            return False
+        if claims.currency.casefold() not in {"cny", "rmb", "¥", "￥"}:
+            return False
+        if claims.inventory != sku.inventory:
             return False
         if (
-            claims.currency is not None
-            and claims.currency.casefold() not in {"cny", "rmb", "¥", "￥"}
-        ):
-            return False
-        if claims.inventory is not None and claims.inventory != sku.inventory:
-            return False
-        if (
-            claims.origin is not None
-            and CopilotService._normalized_fact(claims.origin)
+            CopilotService._normalized_fact(claims.origin)
             != CopilotService._normalized_fact(sku.origin)
         ):
             return False
         if (
-            claims.net_weight_grams is not None
-            and claims.net_weight_grams != sku.net_weight_grams
+            claims.net_weight_grams != sku.net_weight_grams
         ):
             return False
         if (
@@ -599,11 +532,7 @@ class CopilotService:
             != CopilotService._normalized_fact(sku.shipping_eta)
         ):
             return False
-        return CopilotService._valid_all_prose_facts(
-            suggestion.suggestion_text,
-            sku,
-            claims,
-        )
+        return True
 
     @staticmethod
     def _normalized_fact(value: str | None) -> str | None:
@@ -612,97 +541,18 @@ class CopilotService:
         return re.sub(r"\s+", " ", value).strip().casefold()
 
     @staticmethod
-    def _valid_all_prose_facts(
-        text: str,
-        sku: ProductSKURead,
-        claims: CopilotSKUFactClaims,
-    ) -> bool:
-        def matches(patterns: tuple[re.Pattern[str], ...]) -> list[re.Match[str]]:
-            return [
-                match
-                for pattern in patterns
-                for match in pattern.finditer(text)
-            ]
-
-        def currency_code(value: str | None) -> str | None:
-            if value is None:
-                return None
-            normalized = value.casefold()
-            if normalized in {"cny", "rmb", "¥", "￥", "元", "人民币"}:
-                return "cny"
-            if normalized in {"usd", "$"}:
-                return "usd"
-            return None
-
-        price_matches = matches(_PRICE_CLAIM_PATTERNS)
-        if (
-            _FACT_CUES["price"].search(text) is not None
-            or claims.price is not None
-            or claims.currency is not None
-        ) and not price_matches:
-            return False
-        for match in price_matches:
-            price_value = Decimal(match.group("value"))
-            currency = currency_code(match.groupdict().get("currency"))
-            if (
-                price_value != sku.price
-                or currency != "cny"
-                or claims.price != price_value
-                or currency_code(claims.currency) != currency
-            ):
-                return False
-
-        inventory_matches = matches(_INVENTORY_CLAIM_PATTERNS)
-        if (
-            _FACT_CUES["inventory"].search(text) is not None
-            or claims.inventory is not None
-        ) and not inventory_matches:
-            return False
-        for match in inventory_matches:
-            inventory_value = int(match.group("value"))
-            if (
-                inventory_value != sku.inventory
-                or claims.inventory != inventory_value
-            ):
-                return False
-
-        origin_matches = matches(_ORIGIN_CLAIM_PATTERNS)
-        if (
-            _FACT_CUES["origin"].search(text) is not None
-            or claims.origin is not None
-        ) and not origin_matches:
-            return False
-        for match in origin_matches:
-            origin_value = CopilotService._normalized_fact(match.group("value"))
-            if (
-                origin_value != CopilotService._normalized_fact(sku.origin)
-                or origin_value
-                != CopilotService._normalized_fact(claims.origin)
-            ):
-                return False
-
-        weight_matches = matches(_WEIGHT_CLAIM_PATTERNS)
-        if (
-            _FACT_CUES["weight"].search(text) is not None
-            or claims.net_weight_grams is not None
-        ) and not weight_matches:
-            return False
-        for match in weight_matches:
-            grams = Decimal(match.group("value"))
-            if match.group("unit").casefold() in {
-                "kg",
-                "kilogram",
-                "kilograms",
-                "公斤",
-                "千克",
-            }:
-                grams *= 1000
-            if (
-                grams != sku.net_weight_grams
-                or claims.net_weight_grams != grams
-            ):
-                return False
-        return True
+    def _render_verified_sku_facts(sku: ProductSKURead) -> str:
+        origin = sku.origin or "未提供"
+        net_weight = (
+            f"{sku.net_weight_grams} 克"
+            if sku.net_weight_grams is not None
+            else "未提供"
+        )
+        return (
+            f"推荐 {sku.name}（SKU {sku.sku_code}）。"
+            f"价格 CNY {sku.price:.2f}；库存 {sku.inventory}；"
+            f"产地 {origin}；净重 {net_weight}。"
+        )
 
     @staticmethod
     def _citation_snapshots(
@@ -810,7 +660,7 @@ class CopilotService:
         )
         if suggestion is None:
             return None
-        suggestion.edited_text = redact_text(edited_text)
+        suggestion.edited_text = cast(str, redact(edited_text))
         await self.repository.flush()
         await self.repository.refresh_suggestion(suggestion)
         return suggestion

@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fruit_agent.app import app
+from fruit_agent.config import get_settings
 from fruit_agent.db import SessionFactory, engine, get_session, tenant_session
 from fruit_agent.identity.dependencies import get_principal
 from fruit_agent.identity.models import Membership, Role, Tenant, User
@@ -127,6 +128,40 @@ class _RecordingEmbeddingProvider:
     def embed(self, text: str) -> list[float]:
         self.calls.append(text)
         return [1.0, *([0.0] * 1535)]
+
+
+@pytest.mark.asyncio
+async def test_production_rejects_deterministic_provider_with_503(
+    knowledge_management_context: tuple[
+        TenantPrincipal, TenantPrincipal, TenantPrincipal, AsyncSession
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operator, _, _, session = knowledge_management_context
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    get_settings.cache_clear()
+    app.state.embedding_provider = DeterministicEmbeddingProvider()
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: operator
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/knowledge/items",
+                json=_knowledge_payload(operator.user_id),
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.embedding_provider = DeterministicEmbeddingProvider()
+        get_settings.cache_clear()
+
+    assert response.status_code == 503
+    assert (
+        response.json()["error"]["message"]
+        == "embedding provider is not configured"
+    )
+    await session.close()
 
 
 @pytest.mark.asyncio
