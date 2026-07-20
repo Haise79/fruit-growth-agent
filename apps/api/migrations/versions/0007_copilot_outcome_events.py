@@ -18,6 +18,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.create_unique_constraint(
+        "uq_copilot_suggestions_tenant_case_id",
+        "copilot_suggestions",
+        ["tenant_id", "case_id", "id"],
+    )
     op.create_table(
         "copilot_outcome_events",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -73,8 +78,12 @@ def upgrade() -> None:
             name="fk_copilot_outcomes_tenant_case",
         ),
         sa.ForeignKeyConstraint(
-            ["tenant_id", "suggestion_id"],
-            ["copilot_suggestions.tenant_id", "copilot_suggestions.id"],
+            ["tenant_id", "case_id", "suggestion_id"],
+            [
+                "copilot_suggestions.tenant_id",
+                "copilot_suggestions.case_id",
+                "copilot_suggestions.id",
+            ],
             name="fk_copilot_outcomes_tenant_suggestion",
         ),
         sa.PrimaryKeyConstraint("id"),
@@ -123,3 +132,8 @@ def downgrade() -> None:
     op.execute("DROP TRIGGER copilot_outcome_events_immutable ON copilot_outcome_events")
     op.execute("DROP FUNCTION reject_copilot_outcome_event_mutation()")
     op.drop_table("copilot_outcome_events")
+    op.drop_constraint(
+        "uq_copilot_suggestions_tenant_case_id",
+        "copilot_suggestions",
+        type_="unique",
+    )

@@ -78,6 +78,12 @@ class CopilotSuggestion(TenantOwnedMixin, Base):
         UniqueConstraint(
             "tenant_id",
             "case_id",
+            "id",
+            name="uq_copilot_suggestions_tenant_case_id",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "case_id",
             "rank",
             name="uq_copilot_suggestions_tenant_case_rank",
         ),

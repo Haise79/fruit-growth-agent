@@ -20,8 +20,12 @@ class CopilotOutcomeEvent(TenantOwnedMixin, Base):
             name="fk_copilot_outcomes_tenant_case",
         ),
         ForeignKeyConstraint(
-            ("tenant_id", "suggestion_id"),
-            ("copilot_suggestions.tenant_id", "copilot_suggestions.id"),
+            ("tenant_id", "case_id", "suggestion_id"),
+            (
+                "copilot_suggestions.tenant_id",
+                "copilot_suggestions.case_id",
+                "copilot_suggestions.id",
+            ),
             name="fk_copilot_outcomes_tenant_suggestion",
         ),
         UniqueConstraint(

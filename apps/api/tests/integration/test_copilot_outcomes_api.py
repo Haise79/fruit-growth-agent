@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -7,12 +8,17 @@ from alembic import command
 from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fruit_agent.app import app
 from fruit_agent.audit.models import AuditEvent
+from fruit_agent.audit.service import AuditService
 from fruit_agent.copilot.models import CopilotCase, CopilotSuggestion
 from fruit_agent.copilot.outcomes import CopilotOutcomeEvent
+from fruit_agent.copilot.repository import CopilotRepository
+from fruit_agent.copilot.schemas import CopilotOutcomeEventCreate, CopilotOutcomeEventType
+from fruit_agent.copilot.service import CopilotService
 from fruit_agent.db import SessionFactory, engine, get_session, tenant_session
 from fruit_agent.identity.dependencies import get_principal
 from fruit_agent.identity.models import Membership, Role, Tenant, User
@@ -102,6 +108,16 @@ async def _client(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
     app.dependency_overrides.clear()
+
+
+def _outcome_service(session: AsyncSession) -> CopilotService:
+    from fruit_agent.knowledge.repository import KnowledgeRepository
+
+    return CopilotService(
+        repository=CopilotRepository(session),
+        knowledge_repository=KnowledgeRepository(session),
+        providers=[],
+    )
 
 
 @pytest.mark.asyncio
@@ -265,12 +281,142 @@ async def test_suggestion_outcomes_require_a_same_case_suggestion(
 
 
 @pytest.mark.asyncio
-async def test_outcome_migration_round_trip_enables_rls_and_immutability(
-    outcomes_database: None,
+async def test_outcome_database_rejects_suggestion_from_another_case(
+    outcomes_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
 ) -> None:
-    del outcomes_database
+    tenant_a, _, session = outcomes_context
+    case_id, _ = await _seed_case(tenant_a, with_suggestion=False)
+    _, foreign_suggestion_id = await _seed_case(tenant_a)
+    assert foreign_suggestion_id is not None
+
+    async with tenant_session(session, tenant_a.tenant_id):
+        with pytest.raises(IntegrityError):
+            async with session.begin_nested():
+                await session.execute(
+                    text(
+                        "INSERT INTO copilot_outcome_events "
+                        "(id, tenant_id, case_id, suggestion_id, event_type, idempotency_key) "
+                        "VALUES (:id, :tenant_id, :case_id, :suggestion_id, 'payment', 'wrong-case')"
+                    ),
+                    {
+                        "id": uuid4(),
+                        "tenant_id": tenant_a.tenant_id,
+                        "case_id": case_id,
+                        "suggestion_id": foreign_suggestion_id,
+                    },
+                )
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_and_close_late_event_are_serialized(
+    outcomes_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = outcomes_context
+    case_id, _ = await _seed_case(tenant_a, with_suggestion=False)
+    barrier = asyncio.Barrier(2)
+
+    async def record(event_type: CopilotOutcomeEventType, key: str) -> object:
+        async with SessionFactory() as worker_session:
+            async with tenant_session(worker_session, tenant_a.tenant_id):
+                await barrier.wait()
+                result = await _outcome_service(worker_session).record_outcome_event(
+                    tenant_id=tenant_a.tenant_id,
+                    case_id=case_id,
+                    idempotency_key=key,
+                    request=CopilotOutcomeEventCreate(event_type=event_type),
+                )
+                assert result is not None
+                event, _, duplicate = result
+                if not duplicate:
+                    await AuditService(
+                        session=worker_session,
+                        principal=tenant_a,
+                        request_id=f"race-{key}",
+                    ).record(
+                        action="copilot_outcome_recorded",
+                        entity_type="copilot_outcome_event",
+                        entity_id=event.id,
+                        before={},
+                        after={"event_type": event.event_type},
+                    )
+                return event.id
+
+    first_id, second_id = await asyncio.gather(
+        record(CopilotOutcomeEventType.payment, "same-key"),
+        record(CopilotOutcomeEventType.payment, "same-key"),
+    )
+
+    assert first_id == second_id
+    async with tenant_session(session, tenant_a.tenant_id):
+        assert await session.scalar(select(func.count()).select_from(CopilotOutcomeEvent)) == 1
+        assert await session.scalar(select(func.count()).select_from(AuditEvent)) == 1
+
+    async with SessionFactory() as lock_session:
+        async with tenant_session(lock_session, tenant_a.tenant_id):
+            await lock_session.scalar(
+                select(CopilotCase)
+                .where(CopilotCase.tenant_id == tenant_a.tenant_id, CopilotCase.id == case_id)
+                .with_for_update()
+            )
+            close_task = asyncio.create_task(
+                record(CopilotOutcomeEventType.case_closed, "close-race")
+            )
+            await asyncio.sleep(0.05)
+            late_task = asyncio.create_task(
+                record(CopilotOutcomeEventType.payment, "late-race")
+            )
+            await asyncio.sleep(0.05)
+
+    close_result, late_result = await asyncio.gather(
+        close_task,
+        late_task,
+        return_exceptions=True,
+    )
+    assert isinstance(close_result, UUID)
+    assert isinstance(late_result, Exception)
+    assert getattr(late_result, "status_code", None) == 409
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_outcome_migration_round_trip_enforces_immutability_and_restores_rls(
+    outcomes_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = outcomes_context
+    case_id, _ = await _seed_case(tenant_a, with_suggestion=False)
+    event_id = uuid4()
+    async with tenant_session(session, tenant_a.tenant_id):
+        session.add(
+            CopilotOutcomeEvent(
+                id=event_id,
+                tenant_id=tenant_a.tenant_id,
+                case_id=case_id,
+                event_type="payment",
+                idempotency_key="mutation-test",
+            )
+        )
+        await session.flush()
+        with pytest.raises(DBAPIError):
+            async with session.begin_nested():
+                await session.execute(
+                    text("UPDATE copilot_outcome_events SET event_type = 'refund' WHERE id = :id"),
+                    {"id": event_id},
+                )
+        with pytest.raises(DBAPIError):
+            async with session.begin_nested():
+                await session.execute(
+                    text("DELETE FROM copilot_outcome_events WHERE id = :id"),
+                    {"id": event_id},
+                )
+    await session.close()
     config = Config("alembic.ini")
     command.downgrade(config, "0006_copilot_cases")
+    async with SessionFactory() as downgraded_session:
+        missing_table = await downgraded_session.scalar(
+            text("SELECT to_regclass('public.copilot_outcome_events')")
+        )
+    assert missing_table is None
     command.upgrade(config, "head")
     async with SessionFactory() as session:
         flags = await session.execute(

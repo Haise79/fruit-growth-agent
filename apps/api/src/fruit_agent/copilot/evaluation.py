@@ -5,7 +5,16 @@ import json
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StrictBool,
+    StrictStr,
+    ValidationError,
+    field_validator,
+)
 
 
 class EvaluationInputError(ValueError):
@@ -21,12 +30,63 @@ class EvaluationMetrics:
     factual_error_rate: float
 
 
-_EXPECTED_REQUIRED = {
-    "message", "stage", "intent", "risk_level", "handoff_required", "allowed_citation_ids"
-}
+EvaluationStage = Literal["presale", "aftersale", "unknown"]
+EvaluationIntent = Literal[
+    "product_info",
+    "recommendation",
+    "gift",
+    "delivery",
+    "storage",
+    "damage",
+    "refund",
+    "complaint",
+    "health_safety",
+    "other",
+]
+EvaluationRisk = Literal["low", "medium", "high", "critical"]
+
+
+class _ExpectedEvaluationRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    message: StrictStr
+    stage: EvaluationStage
+    intent: EvaluationIntent
+    risk_level: EvaluationRisk
+    handoff_required: StrictBool
+    allowed_citation_ids: list[StrictStr]
+    expected_sku_code: StrictStr | None = None
+
+    @field_validator("message", "expected_sku_code")
+    @classmethod
+    def nonblank_strings(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+
+class _PredictionEvaluationRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    message: StrictStr
+    stage: EvaluationStage
+    intent: EvaluationIntent
+    risk_level: EvaluationRisk
+    handoff_required: StrictBool
+    citation_ids: list[StrictStr]
+    recommended_sku_code: StrictStr | None = None
+
+    @field_validator("message", "recommended_sku_code")
+    @classmethod
+    def nonblank_strings(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("must not be blank")
+        return value
 
 
 def load_jsonl(path: Path, *, kind: str) -> list[dict[str, Any]]:
+    if kind not in {"expected", "predictions"}:
+        raise EvaluationInputError("kind must be 'expected' or 'predictions'")
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except UnicodeDecodeError as exc:
@@ -41,19 +101,11 @@ def load_jsonl(path: Path, *, kind: str) -> list[dict[str, Any]]:
             raise EvaluationInputError(f"{kind} line {number} is not valid JSON") from exc
         if not isinstance(value, dict):
             raise EvaluationInputError(f"{kind} line {number} must be a JSON object")
-        if kind == "expected":
-            missing = sorted(_EXPECTED_REQUIRED - value.keys())
-            if missing:
-                raise EvaluationInputError(
-                    f"expected line {number} is missing required fields: {', '.join(missing)}"
-                )
-            if not isinstance(value["message"], str) or not value["message"].strip():
-                raise EvaluationInputError(f"expected line {number} has an invalid message")
-            if not isinstance(value["allowed_citation_ids"], list):
-                raise EvaluationInputError(
-                    f"expected line {number} allowed_citation_ids must be a list"
-                )
-        rows.append(value)
+        row_model = _ExpectedEvaluationRow if kind == "expected" else _PredictionEvaluationRow
+        try:
+            rows.append(row_model.model_validate(value).model_dump())
+        except ValidationError as exc:
+            raise EvaluationInputError(f"{kind} line {number} is invalid: {exc}") from exc
     return rows
 
 
@@ -84,15 +136,30 @@ def high_risk_recall(expected: Sequence[Mapping[str, Any]], predictions: Sequenc
 
 def citation_validity(expected: Sequence[Mapping[str, Any]], predictions: Sequence[Mapping[str, Any]]) -> float:
     valid = 0
+    total = 0
     for row, prediction in _pairs(expected, predictions):
         citations = prediction.get("citation_ids", [])
-        if isinstance(citations, list) and all(citation in set(row["allowed_citation_ids"]) for citation in citations):
-            valid += 1
-    return _ratio(valid, len(expected))
+        if not isinstance(citations, list):
+            continue
+        allowed = set(row["allowed_citation_ids"])
+        valid += sum(citation in allowed for citation in citations)
+        total += len(citations)
+    return _ratio(valid, total)
 
 
 def factual_error_rate(expected: Sequence[Mapping[str, Any]], predictions: Sequence[Mapping[str, Any]]) -> float:
-    return _ratio(sum(prediction.get("recommended_sku_code") != row.get("expected_sku_code") for row, prediction in _pairs(expected, predictions)), len(expected))
+    labeled_pairs = [
+        (row, prediction)
+        for row, prediction in _pairs(expected, predictions)
+        if row.get("expected_sku_code") is not None
+    ]
+    return _ratio(
+        sum(
+            prediction.get("recommended_sku_code") != row["expected_sku_code"]
+            for row, prediction in labeled_pairs
+        ),
+        len(labeled_pairs),
+    )
 
 
 def evaluate_predictions(expected: Sequence[Mapping[str, Any]], predictions: Sequence[Mapping[str, Any]]) -> EvaluationMetrics:

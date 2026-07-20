@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
+
 from fruit_agent.common.errors import DomainError
 from fruit_agent.common.redaction import redact
 from fruit_agent.common.redaction import redact_text
@@ -561,20 +563,17 @@ class CopilotService:
         idempotency_key: str,
         request: CopilotOutcomeEventCreate,
     ) -> tuple[CopilotOutcomeEvent, CopilotCase, bool] | None:
+        case = await self.repository.get_case_for_update(tenant_id, case_id)
+        if case is None:
+            return None
         existing = await self.repository.get_outcome_by_idempotency_key(
             tenant_id,
             case_id,
             idempotency_key,
         )
         if existing is not None:
-            case = await self.repository.get_case(tenant_id, case_id)
-            if case is None:
-                raise RuntimeError("persisted outcome event has no visible case")
             return existing, case, True
 
-        case = await self.repository.get_case(tenant_id, case_id)
-        if case is None:
-            return None
         if case.status == CopilotCaseStatus.closed.value:
             raise DomainError(
                 code="copilot_case_closed",
@@ -591,17 +590,27 @@ class CopilotService:
                 return None
 
         redacted_metadata = cast(dict[str, Any], redact(request.metadata or {}))
-        event = await self.repository.add_outcome_event(
-            CopilotOutcomeEvent(
-                tenant_id=tenant_id,
-                case_id=case_id,
-                suggestion_id=request.suggestion_id,
-                event_type=request.event_type.value,
-                idempotency_key=idempotency_key,
-                occurred_at=request.occurred_at or datetime.now(UTC),
-                metadata_=redacted_metadata,
+        try:
+            event = await self.repository.add_outcome_event(
+                CopilotOutcomeEvent(
+                    tenant_id=tenant_id,
+                    case_id=case_id,
+                    suggestion_id=request.suggestion_id,
+                    event_type=request.event_type.value,
+                    idempotency_key=idempotency_key,
+                    occurred_at=request.occurred_at or datetime.now(UTC),
+                    metadata_=redacted_metadata,
+                )
             )
-        )
+        except IntegrityError:
+            existing = await self.repository.get_outcome_by_idempotency_key(
+                tenant_id,
+                case_id,
+                idempotency_key,
+            )
+            if existing is not None:
+                return existing, case, True
+            raise
         if request.event_type.value == "case_closed":
             case.status = CopilotCaseStatus.closed.value
             await self.repository.flush()

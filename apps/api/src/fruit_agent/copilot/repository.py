@@ -2,6 +2,7 @@ from typing import cast
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -75,6 +76,23 @@ class CopilotRepository:
         )
         return rows.one_or_none()
 
+    async def get_case_for_update(
+        self,
+        tenant_id: UUID,
+        case_id: UUID,
+    ) -> CopilotCase | None:
+        return cast(
+            CopilotCase | None,
+            await self.session.scalar(
+                select(CopilotCase)
+                .where(
+                    CopilotCase.tenant_id == tenant_id,
+                    CopilotCase.id == case_id,
+                )
+                .with_for_update()
+            ),
+        )
+
     async def get_suggestion(
         self,
         tenant_id: UUID,
@@ -113,11 +131,11 @@ class CopilotRepository:
         return cast(
             CopilotOutcomeEvent | None,
             await self.session.scalar(
-            select(CopilotOutcomeEvent).where(
-                CopilotOutcomeEvent.tenant_id == tenant_id,
-                CopilotOutcomeEvent.case_id == case_id,
-                CopilotOutcomeEvent.idempotency_key == idempotency_key,
-            )
+                select(CopilotOutcomeEvent).where(
+                    CopilotOutcomeEvent.tenant_id == tenant_id,
+                    CopilotOutcomeEvent.case_id == case_id,
+                    CopilotOutcomeEvent.idempotency_key == idempotency_key,
+                )
             ),
         )
 
@@ -125,6 +143,11 @@ class CopilotRepository:
         self,
         event: CopilotOutcomeEvent,
     ) -> CopilotOutcomeEvent:
-        self.session.add(event)
-        await self.session.flush()
+        try:
+            async with self.session.begin_nested():
+                self.session.add(event)
+                await self.session.flush()
+        except IntegrityError:
+            self.session.expunge(event)
+            raise
         return event
