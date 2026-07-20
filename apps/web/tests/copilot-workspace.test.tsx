@@ -142,6 +142,55 @@ describe("CopilotWorkspace", () => {
     expect(screen.queryByText("不应渲染的第四条建议")).not.toBeInTheDocument();
   });
 
+  it("keeps a successful case when only the follow-up recent-case refresh fails", async () => {
+    const created = suggestionCase();
+    let listAttempts = 0;
+    let postAttempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      routeFetch((url, init) => {
+        if (url.endsWith("/api/v1/copilot/cases") && init.method === "POST") {
+          postAttempts += 1;
+          return jsonResponse(created, 201);
+        }
+        if (url.endsWith("/api/v1/copilot/cases") && !init.method) {
+          listAttempts += 1;
+          if (listAttempts === 2) {
+            return jsonResponse({ detail: "temporarily unavailable" }, 503);
+          }
+          return jsonResponse(listAttempts === 1 ? [] : [created]);
+        }
+      }),
+    );
+
+    render(<CopilotWorkspace />);
+    await screen.findByText("暂无近期工单。");
+    await userEvent.type(screen.getByLabelText("客户消息"), created.message);
+    await userEvent.click(screen.getByRole("button", { name: "生成建议" }));
+
+    expect(await screen.findByText("建议已就绪")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "工单已生成，但近期工单刷新失败",
+    );
+    expect(
+      screen.queryByText("生成失败，请稍后重试"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "重新生成" }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "重新加载近期工单" }),
+    );
+    expect(
+      await within(
+        screen.getByRole("complementary", { name: "近期工单" }),
+      ).findByText(created.message),
+    ).toBeInTheDocument();
+    expect(postAttempts).toBe(1);
+    expect(listAttempts).toBe(3);
+  });
+
   it("shows mandatory handoff reasons without suggestions", async () => {
     const handoff = suggestionCase({
       stage: "aftersale",
@@ -256,8 +305,10 @@ describe("CopilotWorkspace", () => {
     await userEvent.click(screen.getByRole("button", { name: "重试采纳并复制" }));
     expect(await screen.findByText("已复制并记录采纳")).toBeInTheDocument();
     expect(calls).toEqual(["copy-failed", "copy-success", "event"]);
-    expect(eventHeaders[0]).toBe(
-      `copilot:${CASE_ID}:suggestion_adopted:${SUGGESTION_ID}`,
+    expect(eventHeaders[0]).toMatch(
+      new RegExp(
+        `^copilot:${CASE_ID}:suggestion_adopted:${SUGGESTION_ID}:`,
+      ),
     );
   });
 
@@ -313,6 +364,53 @@ describe("CopilotWorkspace", () => {
     expect(clipboard.writeText).toHaveBeenCalledTimes(2);
   });
 
+  it("rotates the adoption action-instance key after each successful adoption", async () => {
+    const current = suggestionCase();
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: clipboard,
+    });
+    const keys: string[] = [];
+    let eventNumber = 0;
+    vi.stubGlobal(
+      "fetch",
+      routeFetch((url, init) => {
+        if (url.endsWith("/events") && init.method === "POST") {
+          eventNumber += 1;
+          keys.push(new Headers(init.headers).get("Idempotency-Key") ?? "");
+          return jsonResponse({
+            id: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa${eventNumber}`,
+            case_id: CASE_ID,
+            suggestion_id: SUGGESTION_ID,
+            event_type: "suggestion_adopted",
+            occurred_at: "2026-07-20T08:10:00Z",
+            metadata: {},
+            created_at: "2026-07-20T08:10:00Z",
+            case_status: "suggestions_ready",
+          }, 201);
+        }
+        if (url.endsWith(`/cases/${CASE_ID}`)) {
+          return jsonResponse(current);
+        }
+        if (url.endsWith("/api/v1/copilot/cases") && !init.method) {
+          return jsonResponse([current]);
+        }
+      }),
+    );
+
+    render(<CopilotWorkspace />);
+    const adopt = await screen.findByRole("button", { name: "采纳并复制" });
+    await userEvent.click(adopt);
+    await screen.findByText("已复制并记录采纳");
+    await userEvent.click(adopt);
+    await waitFor(() => expect(keys).toHaveLength(2));
+
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(new Set(keys).size).toBe(2);
+    expect(clipboard.writeText).toHaveBeenCalledTimes(2);
+  });
+
   it("requires unsaved edits to be persisted before adoption", async () => {
     vi.stubGlobal(
       "fetch",
@@ -329,6 +427,67 @@ describe("CopilotWorkspace", () => {
 
     expect(screen.getByRole("button", { name: "采纳并复制" })).toBeDisabled();
     expect(screen.getByText("请先保存修改，再采纳并复制")).toBeInTheDocument();
+  });
+
+  it("treats surrounding whitespace as dirty and copies the backend-persisted text", async () => {
+    const current = suggestionCase();
+    const originalText = current.suggestions[0].original_text;
+    const persistedText = "服务端规范化后的建议文本。";
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: clipboard,
+    });
+    vi.stubGlobal(
+      "fetch",
+      routeFetch((url, init) => {
+        if (url.endsWith(`/suggestions/${SUGGESTION_ID}`)) {
+          expect(JSON.parse(String(init.body))).toEqual({
+            edited_text: originalText,
+          });
+          return jsonResponse({
+            ...current.suggestions[0],
+            edited_text: persistedText,
+          });
+        }
+        if (url.endsWith("/events") && init.method === "POST") {
+          return jsonResponse({
+            id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            case_id: CASE_ID,
+            suggestion_id: SUGGESTION_ID,
+            event_type: "suggestion_adopted",
+            occurred_at: "2026-07-20T08:10:00Z",
+            metadata: {},
+            created_at: "2026-07-20T08:10:00Z",
+            case_status: "suggestions_ready",
+          }, 201);
+        }
+        if (url.endsWith(`/cases/${CASE_ID}`)) {
+          return jsonResponse(current);
+        }
+        if (url.endsWith("/api/v1/copilot/cases") && !init.method) {
+          return jsonResponse([current]);
+        }
+      }),
+    );
+
+    render(<CopilotWorkspace />);
+    const editor = await screen.findByLabelText("建议 1 内容");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, `  ${originalText}  `);
+
+    const adopt = screen.getByRole("button", { name: "采纳并复制" });
+    expect(adopt).toBeDisabled();
+    expect(screen.getByText("请先保存修改，再采纳并复制")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    expect(await screen.findByText("修改已保存")).toBeInTheDocument();
+    expect(editor).toHaveValue(persistedText);
+    expect(adopt).toBeEnabled();
+
+    await userEvent.click(adopt);
+    expect(await screen.findByText("已复制并记录采纳")).toBeInTheDocument();
+    expect(clipboard.writeText).toHaveBeenCalledWith(persistedText);
   });
 
   it("keeps recorded adoption successful when background refresh fails", async () => {
@@ -533,5 +692,44 @@ describe("CopilotWorkspace", () => {
       "生成失败，请稍后重试",
     );
     expect(screen.getByRole("button", { name: "重新生成" })).toBeInTheDocument();
+  });
+
+  it("keeps an initial recent-case load error distinct from an empty list and retries only the list", async () => {
+    let listAttempts = 0;
+    let resolveRetry: ((response: Response) => void) | undefined;
+    const retryResponse = new Promise<Response>((resolve) => {
+      resolveRetry = resolve;
+    });
+    const requests: RequestInit[] = [];
+    vi.stubGlobal(
+      "fetch",
+      routeFetch((url, init) => {
+        if (url.endsWith("/api/v1/copilot/cases") && !init.method) {
+          requests.push(init);
+          listAttempts += 1;
+          if (listAttempts === 1) {
+            return jsonResponse({ detail: "temporarily unavailable" }, 503);
+          }
+          return retryResponse;
+        }
+      }),
+    );
+
+    render(<CopilotWorkspace />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "近期工单加载失败，请稍后重试",
+    );
+    expect(screen.queryByText("暂无近期工单。")).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "重新加载近期工单" }),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("正在加载近期工单");
+    expect(listAttempts).toBe(2);
+    expect(requests.every((init) => !init.method)).toBe(true);
+
+    resolveRetry?.(new Response(JSON.stringify([]), { status: 200 }));
+    expect(await screen.findByText("暂无近期工单。")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

@@ -28,6 +28,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav aria-label="主导航">
           {navigation.map((item) => (
             <Link
+              aria-current={pathname === item.href ? "page" : undefined}
               className={`nav-link ${
                 pathname === item.href ? "is-active" : ""
               }`}

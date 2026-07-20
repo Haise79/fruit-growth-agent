@@ -44,6 +44,7 @@ No backend schemas, migrations, routes, or services were changed.
 - `apps/web/lib/api.ts`
 - `apps/web/lib/types.ts`
 - `apps/web/tests/copilot-workspace.test.tsx`
+- `apps/web/tests/app-shell.test.tsx`
 - `apps/web/tests/knowledge-workspace.test.tsx`
 - `apps/web/tests/setup.ts`
 
@@ -72,14 +73,29 @@ No backend schemas, migrations, routes, or services were changed.
      "requires unsaved|keeps recorded|rotates the action" --reporter=dot`
    - Result before remediation: `3 failed`.
    - The failures proved that unsaved edits could be adopted, a successful
-     event could be misreported as failed when its background refresh failed,
-     and repeated outcomes reused one idempotency key.
+   event could be misreported as failed when its background refresh failed,
+   and repeated outcomes reused one idempotency key.
+4. Parent-review regressions:
+   - Successful case creation followed by a failed list refresh rendered the
+     generic generation failure. The focused test failed with
+     `Expected: 工单已生成，但近期工单刷新失败; Received:
+     生成失败，请稍后重试`.
+   - Two successful suggestion adoptions produced identical idempotency keys.
+   - A surrounding-whitespace edit left adoption enabled instead of marking
+     the raw text dirty.
+   - Advancing fake time beyond `valid_until` left knowledge freshness at
+     `有效`.
+   - The active navigation link had no `aria-current="page"`.
+   - A failed initial recent-case request also rendered
+     `暂无近期工单。` and exposed no list retry.
+   - Each regression was run and observed failing independently before its
+     implementation change.
 
 ## GREEN evidence
 
 - First focused Task 4 result: `2` files, `16` tests passed.
 - Final full web result after the independent-review regressions:
-  `3` files, `21` tests passed, zero unhandled errors.
+  `4` files, `27` tests passed, zero unhandled errors.
 - Covered behavior:
   - successful suggestions and maximum-three rendering;
   - mandatory handoff and reasons;
@@ -88,17 +104,25 @@ No backend schemas, migrations, routes, or services were changed.
   - copy failure and event failure retry without false success;
   - mandatory save-before-adopt for dirty suggestion edits;
   - stable adoption and per-action-instance idempotency keys;
+  - adoption-key reuse across copy/event failures and rotation after each
+    successful adoption;
+  - exact raw-text dirty checks and backend-returned persisted copy text;
   - successful event status preserved across background refresh failures,
     with an explicit refresh retry;
+  - successful case POSTs preserved when only the subsequent recent-case list
+    refresh fails, with a list-only retry and no duplicate POST;
   - expandable citation snapshots;
   - payment, refund, complaint, and close events;
   - detail/recent-case refresh and current-session timeline;
   - loading/error announcements;
+  - distinct initial recent-case error/empty states and list-only retry;
+  - active-link `aria-current="page"` semantics;
   - live knowledge provenance, owner, review status, dates, freshness, and
     content;
   - create/edit/review wire shapes;
   - visible reset-to-draft status;
   - denied knowledge edit retained for correction and retry.
+  - minute-by-minute knowledge freshness transitions with interval cleanup.
 
 ## Final verification
 
@@ -107,7 +131,7 @@ All commands used `CI=true`, the pinned Node runtime at
 and the pinned pnpm fallback.
 
 - `pnpm run test -- --reporter=dot` —
-  `3 passed` test files, `21 passed` tests.
+  `4 passed` test files, `27 passed` tests.
 - `pnpm run lint` — exit `0`, no ESLint warnings or errors.
 - `pnpm run build` — exit `0`; TypeScript passed and Next 16.2.10 statically
   generated `/copilot` and `/knowledge`.
@@ -167,10 +191,14 @@ design. No fixable visual mismatch remained in the inspected desktop or true
 ```text
 E030B05C98C23DC911CCB50962BFC27998AF12ED0F88C03F4AF408D8BF7B272A  apps/web/lib/types.ts
 770486E477767C72867CA03AA5C76141727C0B513409FBF76AF42299F5749A2F  apps/web/lib/api.ts
-CD8512F82F374493E774F0A1E417051C05E637E37A97800E12446366DB5ED599  apps/web/components/copilot/copilot-workspace.tsx
+AB2F7BEA472341239AEFD8EB7EFCA4D31B41F689C4706A754F07C6117AB96155  apps/web/components/app-shell.tsx
+4374CF36124FA1BA9FB9D4FA0CF5A97172376DA616E09234622FC17F22C6F321  apps/web/components/copilot/copilot-workspace.tsx
+059DA211D84BD1C4ABC9409F85F6843CF818064A042FF3FE447766A38E02F086  apps/web/components/copilot/suggestion-card.tsx
+8EC2F3A84C16779793233BEE0E42EE2DAE70B2EF3AAF7BADCB5CC333D31542EC  apps/web/components/knowledge/knowledge-table.tsx
 4FDD01788A2FA2FA13799FBF012C1CA35A3D8C0C54486B76AB423FA78F0127DF  apps/web/components/knowledge/knowledge-workspace.tsx
-5B7FFB664081EF385F68C15FCAA80AB76D2F2BA3928B2C2384CE8E66B5161410  apps/web/tests/copilot-workspace.test.tsx
-C2FEB6FE87BF517E8F7895DC2F26271DB00C1904675C136AF064445247EA9859  apps/web/tests/knowledge-workspace.test.tsx
+D99024EEF02050A994CD1E3FFCD142A9D8595365DD3E78159B64CA1D6C8ED3A0  apps/web/tests/app-shell.test.tsx
+0ECCC9A21C51FD313C1E2FBD19183508481186866FD00D4C42D5965698053C07  apps/web/tests/copilot-workspace.test.tsx
+043CAE2FF823CF510E28D0058F7833AB04F7485F083F58F3A2A8D9D3C5BD8CA8  apps/web/tests/knowledge-workspace.test.tsx
 092DBDCD0A47393455A69D454D999E7AAA626266EDF026169EA6AE3D41F80D34  docs/design/foundation-workspace-concept.png
 ```
 

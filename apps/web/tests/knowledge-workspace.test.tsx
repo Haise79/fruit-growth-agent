@@ -1,8 +1,9 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { KnowledgeWorkspace } from "@/components/knowledge/knowledge-workspace";
+import { KnowledgeTable } from "@/components/knowledge/knowledge-table";
 
 const KNOWLEDGE_ID = "11111111-1111-4111-8111-111111111111";
 const OWNER_ID = "22222222-2222-4222-8222-222222222222";
@@ -34,6 +35,7 @@ function knowledgeItem(overrides: Record<string, unknown> = {}) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -58,6 +60,29 @@ it("loads live knowledge rows with provenance, owner, status, freshness, and con
   ).toBeInTheDocument();
   expect(within(row).getByText(/2026/)).toBeInTheDocument();
   expect(within(row).getByText(/2030/)).toBeInTheDocument();
+});
+
+it("updates freshness when an item expires while the page stays open", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2029-12-31T23:59:30Z"));
+  const { unmount } = render(
+    <KnowledgeTable
+      items={[knowledgeItem({ valid_until: "2030-01-01T00:00:00Z" })]}
+      onEdit={vi.fn().mockResolvedValue(true)}
+      onReview={vi.fn().mockResolvedValue(undefined)}
+      pendingId={null}
+    />,
+  );
+
+  expect(screen.getByText("有效")).toBeInTheDocument();
+  act(() => {
+    vi.advanceTimersByTime(60_000);
+  });
+  expect(screen.getByText("已过期")).toBeInTheDocument();
+  expect(screen.queryByText("有效")).not.toBeInTheDocument();
+
+  unmount();
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it("creates knowledge with the exact API wire names", async () => {

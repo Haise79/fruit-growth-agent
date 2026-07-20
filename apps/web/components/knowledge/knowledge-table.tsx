@@ -1,13 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type {
   KnowledgeItem,
   KnowledgeReviewStatus,
 } from "@/lib/types";
-
-const PAGE_LOADED_AT = Date.now();
 
 type KnowledgeTableProps = {
   items: KnowledgeItem[];
@@ -42,6 +40,7 @@ export function KnowledgeTable({
 }: KnowledgeTableProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState("");
+  const now = useNow();
 
   function startEditing(item: KnowledgeItem) {
     setEditingId(item.id);
@@ -72,7 +71,7 @@ export function KnowledgeTable({
           {items.map((item) => {
             const expired =
               !item.valid_until ||
-              new Date(item.valid_until).getTime() <= PAGE_LOADED_AT;
+              new Date(item.valid_until).getTime() <= now;
             const isEditing = editingId === item.id;
             const isPending = pendingId === item.id;
             return (
@@ -164,6 +163,19 @@ export function KnowledgeTable({
       </table>
     </div>
   );
+}
+
+function useNow(intervalMs = 60_000) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNow(Date.now());
+    }, intervalMs);
+    return () => window.clearInterval(intervalId);
+  }, [intervalMs]);
+
+  return now;
 }
 
 function formatDate(value: string): string {

@@ -25,6 +25,7 @@ export function CopilotWorkspace() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [requestError, setRequestError] = useState("");
+  const [recentCasesError, setRecentCasesError] = useState("");
   const [refreshError, setRefreshError] = useState("");
 
   const refreshCases = useCallback(async () => {
@@ -48,7 +49,7 @@ export function CopilotWorkspace() {
       })
       .catch(() => {
         if (active) {
-          setRequestError("近期工单加载失败，请稍后重试");
+          setRecentCasesError("近期工单加载失败，请稍后重试");
         }
       })
       .finally(() => {
@@ -68,11 +69,31 @@ export function CopilotWorkspace() {
       setLatencyMs(Math.max(1, Math.round(performance.now() - startedAt)));
       setCurrentCase(created);
       setEvents([]);
-      await refreshCases();
+      try {
+        await refreshCases();
+        setRecentCasesError("");
+      } catch {
+        setRecentCasesError("工单已生成，但近期工单刷新失败");
+      }
     } catch {
       setRequestError("生成失败，请稍后重试");
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function retryRecentCases() {
+    const retryError = recentCasesError.startsWith("工单已生成")
+      ? "工单已生成，但近期工单刷新失败"
+      : "近期工单加载失败，请稍后重试";
+    setIsLoading(true);
+    try {
+      await refreshCases();
+      setRecentCasesError("");
+    } catch {
+      setRecentCasesError(retryError);
+    } finally {
+      setIsLoading(false);
     }
   }
 
@@ -152,6 +173,18 @@ export function CopilotWorkspace() {
               </button>
             </div>
           ) : null}
+          {recentCasesError ? (
+            <div className="form-error page-alert" role="alert">
+              <span>{recentCasesError}</span>
+              <button
+                className="text-button"
+                onClick={retryRecentCases}
+                type="button"
+              >
+                重新加载近期工单
+              </button>
+            </div>
+          ) : null}
           {currentCase ? (
             <CasePanel
               key={currentCase.id}
@@ -172,7 +205,7 @@ export function CopilotWorkspace() {
           </div>
           {isLoading ? (
             <p role="status">正在加载近期工单…</p>
-          ) : cases.length ? (
+          ) : recentCasesError ? null : cases.length ? (
             <ol>
               {cases.map((item) => (
                 <li key={item.id}>

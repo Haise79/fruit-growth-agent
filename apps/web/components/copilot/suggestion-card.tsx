@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   editCopilotSuggestion,
@@ -33,7 +33,16 @@ export function SuggestionCard({
   const [adoptError, setAdoptError] = useState<"copy" | "event" | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isAdopting, setIsAdopting] = useState(false);
-  const isDirty = text.trim() !== savedText;
+  const adoptionKey = useRef<string | null>(null);
+  const isDirty = text !== savedText;
+
+  function getAdoptionKey() {
+    if (adoptionKey.current) return adoptionKey.current;
+
+    adoptionKey.current =
+      `copilot:${caseId}:suggestion_adopted:${suggestion.id}:${crypto.randomUUID()}`;
+    return adoptionKey.current;
+  }
 
   async function saveEdit() {
     const editedText = text.trim();
@@ -64,6 +73,7 @@ export function SuggestionCard({
     setIsAdopting(true);
     setAdoptStatus("");
     setAdoptError(null);
+    const idempotencyKey = getAdoptionKey();
     try {
       if (!navigator.clipboard?.writeText) {
         throw new Error("clipboard unavailable");
@@ -83,8 +93,9 @@ export function SuggestionCard({
           event_type: "suggestion_adopted",
           suggestion_id: suggestion.id,
         },
-        `copilot:${caseId}:suggestion_adopted:${suggestion.id}`,
+        idempotencyKey,
       );
+      adoptionKey.current = null;
       await onOutcome(event);
       setAdoptStatus("已复制并记录采纳");
     } catch {
