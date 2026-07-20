@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Self
+from typing import Any, Literal, Self
 from uuid import UUID
 
 from pydantic import (
@@ -136,6 +136,8 @@ class CopilotCitationRead(BaseModel):
     source_id: UUID
     source_name: str
     snapshot: dict[str, Any]
+    source_updated_at: datetime
+    retrieved_at: datetime
     created_at: datetime
 
 
@@ -150,9 +152,21 @@ class CopilotSuggestionRead(BaseModel):
     confidence: float
     risk_tip: str | None
     degraded: bool
+    adoption_status: Literal["adopted", "rejected"] | None = None
     citations: list[CopilotCitationRead]
     created_at: datetime
     updated_at: datetime
+
+
+class CopilotOutcomeTimelineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    suggestion_id: UUID | None
+    event_type: CopilotOutcomeEventType
+    occurred_at: datetime
+    metadata: dict[str, Any] = Field(validation_alias="metadata_")
+    created_at: datetime
 
 
 class CopilotCaseRead(BaseModel):
@@ -168,6 +182,10 @@ class CopilotCaseRead(BaseModel):
     risk: CopilotRisk
     status: CopilotCaseStatus
     risk_reasons: list[str]
+    response_time_ms: int
+    handoff_reason: str | None
+    conflict_source_ids: list[str]
     suggestions: list[CopilotSuggestionRead]
+    outcomes: list[CopilotOutcomeTimelineRead] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime

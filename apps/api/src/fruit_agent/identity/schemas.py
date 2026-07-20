@@ -13,6 +13,13 @@ class TenantPrincipal(BaseModel):
     role: Role
 
 
+class SessionRead(BaseModel):
+    user_id: UUID
+    tenant_id: UUID
+    role: Role
+    permissions: list[str]
+
+
 class MemberCreate(BaseModel):
     email: EmailStr
     role: Role

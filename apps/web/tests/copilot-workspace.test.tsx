@@ -28,6 +28,10 @@ function suggestionCase(overrides: Record<string, unknown> = {}) {
     risk: "low",
     status: "suggestions_ready",
     risk_reasons: [],
+    response_time_ms: 184,
+    handoff_reason: null,
+    conflict_source_ids: [],
+    outcomes: [],
     suggestions: [
       {
         id: SUGGESTION_ID,
@@ -84,6 +88,90 @@ afterEach(() => {
 });
 
 describe("CopilotWorkspace", () => {
+  it("shows the complete persisted timeline when switching to a historical case", async () => {
+    const historical = suggestionCase({
+      message: "historical case",
+      response_time_ms: 42,
+      outcomes: [
+        "payment",
+        "refund",
+        "complaint",
+        "suggestion_adopted",
+        "case_closed",
+      ].map((event_type, index) => ({
+        id: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa${index}`,
+        suggestion_id: event_type === "suggestion_adopted" ? SUGGESTION_ID : null,
+        event_type,
+        occurred_at: `2026-07-20T08:0${index}:00Z`,
+        metadata: {},
+        created_at: `2026-07-20T08:0${index}:00Z`,
+      })),
+    });
+    vi.stubGlobal(
+      "fetch",
+      routeFetch((url, init) => {
+        if (url.endsWith(`/cases/${CASE_ID}`)) return jsonResponse(historical);
+        if (url.endsWith("/api/v1/copilot/cases") && !init.method) {
+          return jsonResponse([historical]);
+        }
+      }),
+    );
+    render(<CopilotWorkspace />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /historical case/ }),
+    );
+    const timeline = screen.getByRole("region", { name: "本次操作记录" });
+    for (const eventType of [
+      "payment",
+      "refund",
+      "complaint",
+      "suggestion_adopted",
+      "case_closed",
+    ]) {
+      expect(within(timeline).getByText(eventType)).toBeInTheDocument();
+    }
+    expect(screen.getByText("42 毫秒")).toBeInTheDocument();
+  });
+
+  it("rejects a suggestion idempotently and reuses the key on retry", async () => {
+    const current = suggestionCase();
+    const keys: string[] = [];
+    let attempt = 0;
+    vi.stubGlobal(
+      "fetch",
+      routeFetch((url, init) => {
+        if (url.endsWith("/events") && init.method === "POST") {
+          keys.push(new Headers(init.headers).get("Idempotency-Key") ?? "");
+          attempt += 1;
+          if (attempt === 1) return jsonResponse({ detail: "retry" }, 503);
+          return jsonResponse({
+            id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            case_id: CASE_ID,
+            suggestion_id: SUGGESTION_ID,
+            event_type: "suggestion_rejected",
+            occurred_at: "2026-07-20T08:10:00Z",
+            metadata: {},
+            created_at: "2026-07-20T08:10:00Z",
+            case_status: "suggestions_ready",
+          }, 201);
+        }
+        if (url.endsWith(`/cases/${CASE_ID}`)) return jsonResponse(current);
+        if (url.endsWith("/api/v1/copilot/cases") && !init.method) {
+          return jsonResponse([current]);
+        }
+      }),
+    );
+    render(<CopilotWorkspace />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "拒绝建议" }),
+    );
+    expect(await screen.findByText(/拒绝记录失败/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "重试拒绝建议" }));
+    expect(await screen.findByText("已记录拒绝")).toBeInTheDocument();
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
   it("creates a case and renders classifications, latency, and at most three suggestions", async () => {
     const created = suggestionCase({
       suggestions: [

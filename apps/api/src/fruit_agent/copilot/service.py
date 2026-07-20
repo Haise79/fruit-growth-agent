@@ -163,6 +163,12 @@ _PRODUCT_AUXILIARY_STORED = re.compile(
     re.IGNORECASE,
 )
 _PRODUCT_SCOPED_TOPICS = {"recommendation", "storage"}
+_DIRECT_HANDOFF_INTENTS = {
+    CopilotIntent.health_safety,
+    CopilotIntent.refund,
+    CopilotIntent.complaint,
+    CopilotIntent.damage,
+}
 
 
 def _matching_topics(text: str) -> set[str]:
@@ -223,6 +229,11 @@ class CopilotService:
         now: datetime | None = None,
     ) -> CopilotCase:
         checked_at = now or datetime.now(UTC)
+        selected_sku_codes = await self._merge_message_sku_codes(
+            tenant_id=tenant_id,
+            selected_sku_codes=request.selected_sku_codes,
+            message=request.message,
+        )
         raw_classification = classify_customer_message(request.message)
         redacted_message = cast(str, redact(request.message))
         residual_pii = redacted_message == PII_PLACEHOLDER
@@ -239,7 +250,7 @@ class CopilotService:
             tenant_id=tenant_id,
             created_by_user_id=user_id,
             message=redacted_message,
-            selected_sku_codes=request.selected_sku_codes,
+            selected_sku_codes=selected_sku_codes,
             stage=classification.stage.value,
             intent=classification.intent.value,
             risk=risk.value,
@@ -248,12 +259,25 @@ class CopilotService:
         )
         await self.repository.add_case(case)
 
-        if classification.requires_handoff or residual_pii:
+        if (
+            classification.requires_handoff
+            or classification.intent in _DIRECT_HANDOFF_INTENTS
+            or residual_pii
+        ):
+            if (
+                classification.intent in _DIRECT_HANDOFF_INTENTS
+                and "rule_direct_handoff_intent" not in case.risk_reasons
+            ):
+                case.risk_reasons = [
+                    *case.risk_reasons,
+                    "rule_direct_handoff_intent",
+                ]
+                await self.repository.flush()
             return case
 
         skus, knowledge, evidence_failure = await self._load_evidence(
             tenant_id=tenant_id,
-            selected_sku_codes=request.selected_sku_codes,
+            selected_sku_codes=selected_sku_codes,
             message=redacted_message,
             now=checked_at,
         )
@@ -267,6 +291,12 @@ class CopilotService:
                 ),
             ).value
             case.risk_reasons = [*case.risk_reasons, evidence_failure]
+            case.handoff_reason = evidence_failure
+            case.conflict_source_ids = getattr(
+                self,
+                "_conflict_source_ids",
+                [],
+            )
             await self.repository.flush()
             return case
 
@@ -308,6 +338,13 @@ class CopilotService:
         case.risk = merged_risk.value
         case.stage = CopilotStage(output.stage).value
         case.intent = CopilotIntent(output.intent).value
+        if CopilotIntent(case.intent) in _DIRECT_HANDOFF_INTENTS:
+            case.risk_reasons = [
+                *case.risk_reasons,
+                "model_direct_handoff_intent",
+            ]
+            await self.repository.flush()
+            return case
         if merged_risk in {CopilotRisk.high, CopilotRisk.critical}:
             case.risk_reasons = [*case.risk_reasons, "model_high_risk"]
             await self.repository.flush()
@@ -366,10 +403,41 @@ class CopilotService:
                 draft=draft,
                 skus=skus,
                 knowledge=knowledge,
+                retrieved_at=checked_at,
             ):
                 self.repository.add_citation(citation)
             await self.repository.flush()
         return case
+
+    async def _merge_message_sku_codes(
+        self,
+        *,
+        tenant_id: UUID,
+        selected_sku_codes: list[str],
+        message: str,
+    ) -> list[str]:
+        available = await self.knowledge_repository.list_sku_codes(tenant_id)
+        detected: list[tuple[int, str]] = []
+        for code in available:
+            if not code:
+                continue
+            match = re.search(
+                rf"(?<![A-Z0-9_-]){re.escape(code)}(?![A-Z0-9_-])",
+                message,
+                flags=re.IGNORECASE,
+            )
+            if match is not None:
+                detected.append((match.start(), code))
+        detected.sort(key=lambda item: item[0])
+        merged = list(selected_sku_codes)
+        seen = {code.upper() for code in merged}
+        for _, code in detected:
+            if code.upper() not in seen:
+                merged.append(code)
+                seen.add(code.upper())
+            if len(merged) == 3:
+                break
+        return merged[:3]
 
     async def _load_evidence(
         self,
@@ -379,6 +447,7 @@ class CopilotService:
         message: str,
         now: datetime,
     ) -> tuple[list[ProductSKURead], list[MerchantKnowledge], str | None]:
+        self._conflict_source_ids: list[str] = []
         skus: list[ProductSKURead] = []
         if self.embedding_provider is None:
             return [], [], "embedding_provider_unavailable"
@@ -398,6 +467,10 @@ class CopilotService:
                     if result.status == "conflict"
                     else f"sku_evidence_{result.status}"
                 )
+                self._conflict_source_ids = [
+                    str(source_id)
+                    for source_id in result.conflict_source_ids
+                ]
                 return [], [], reason
             skus.append(result.sku)
 
@@ -648,6 +721,7 @@ class CopilotService:
         draft: CopilotAgentSuggestion,
         skus: list[ProductSKURead],
         knowledge: list[MerchantKnowledge],
+        retrieved_at: datetime,
     ) -> list[CopilotCitationSnapshot]:
         citations: list[CopilotCitationSnapshot] = []
         if draft.recommended_sku_code is not None:
@@ -663,6 +737,8 @@ class CopilotService:
                     citation_type=CopilotCitationType.sku.value,
                     source_id=sku.id,
                     source_name=f"SKU {sku.sku_code}",
+                    source_updated_at=sku.updated_at or retrieved_at,
+                    retrieved_at=retrieved_at,
                     snapshot={
                         "sku_code": sku.sku_code,
                         "name": sku.name,
@@ -695,6 +771,8 @@ class CopilotService:
                     citation_type=CopilotCitationType.knowledge.value,
                     source_id=item.id,
                     source_name=item.source_name,
+                    source_updated_at=item.updated_at,
+                    retrieved_at=retrieved_at,
                     snapshot={
                         "knowledge_type": item.knowledge_type,
                         "content": item.content,

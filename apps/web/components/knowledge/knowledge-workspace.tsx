@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   createKnowledgeItem,
+  getSkuFact,
+  getSession,
   listKnowledgeItems,
   reviewKnowledgeItem,
   updateKnowledgeItem,
@@ -13,6 +15,8 @@ import type {
   KnowledgeItemCreate,
   KnowledgeItemUpdate,
   KnowledgeReviewStatus,
+  Session,
+  ExactFactResult,
 } from "@/lib/types";
 
 import { KnowledgeForm } from "./knowledge-form";
@@ -32,6 +36,10 @@ export function KnowledgeWorkspace() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
+  const [session, setSession] = useState<Session | null>(null);
+  const [skuCode, setSkuCode] = useState("");
+  const [skuResult, setSkuResult] = useState<ExactFactResult | null>(null);
+  const [skuError, setSkuError] = useState("");
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -61,6 +69,26 @@ export function KnowledgeWorkspace() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    getSession()
+      .then((current) => {
+        if (active) setSession(current);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const permissions = Array.isArray(session?.permissions)
+    ? session.permissions
+    : null;
+  const canWrite =
+    permissions === null || permissions.includes("knowledge:write");
+  const canReview =
+    permissions === null || permissions.includes("knowledge:review");
 
   function replaceItem(next: KnowledgeItem) {
     setItems((current) =>
@@ -123,6 +151,18 @@ export function KnowledgeWorkspace() {
     }
   }
 
+  async function lookupSku() {
+    const code = skuCode.trim();
+    if (!code) return;
+    setSkuError("");
+    try {
+      setSkuResult(await getSkuFact(code));
+    } catch {
+      setSkuResult(null);
+      setSkuError("SKU 查询失败，请重试");
+    }
+  }
+
   return (
     <div className="page knowledge-page">
       <div className="page-title-row">
@@ -132,18 +172,44 @@ export function KnowledgeWorkspace() {
             价格和库存走精确查询；FAQ 与话术走语义检索。
           </p>
         </div>
-        <button
-          className="primary-button compact-button"
-          onClick={() => setShowCreate((visible) => !visible)}
-          type="button"
-        >
-          {showCreate ? "收起新增" : "新增知识"}
-        </button>
+        {canWrite ? (
+          <button
+            className="primary-button compact-button"
+            onClick={() => setShowCreate((visible) => !visible)}
+            type="button"
+          >
+            {showCreate ? "收起新增" : "新增知识"}
+          </button>
+        ) : null}
       </div>
 
       {showCreate ? (
         <KnowledgeForm isSaving={isCreating} onSave={create} />
       ) : null}
+
+      <section className="sku-lookup" aria-label="SKU 事实与冲突">
+        <label>
+          SKU 冲突查询
+          <input
+            onChange={(event) => setSkuCode(event.target.value)}
+            value={skuCode}
+          />
+        </label>
+        <button className="secondary-button" onClick={lookupSku} type="button">
+          查询 SKU
+        </button>
+        {skuResult?.requires_human ? (
+          <div className="handoff-notice" role="status">
+            <strong>需要人工处理</strong>
+            <ul>
+              {skuResult.conflict_source_ids.map((sourceId) => (
+                <li key={sourceId}>{sourceId}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {skuError ? <p className="form-error" role="alert">{skuError}</p> : null}
+      </section>
 
       {notice ? (
         <p className="decision-notice" role="status">
@@ -173,6 +239,8 @@ export function KnowledgeWorkspace() {
       {!isLoading && !loadError && items.length ? (
         <KnowledgeTable
           items={items}
+          canReview={canReview}
+          canWrite={canWrite}
           onEdit={edit}
           onReview={review}
           pendingId={pendingId}

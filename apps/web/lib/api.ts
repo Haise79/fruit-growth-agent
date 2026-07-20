@@ -11,6 +11,8 @@ import type {
   KnowledgeItemUpdate,
   KnowledgeReviewStatus,
   Member,
+  Session,
+  ExactFactResult,
 } from "@/lib/types";
 
 function accessToken(): string {
@@ -55,6 +57,16 @@ export function importProducts(file: File): Promise<ImportResult> {
 
 export function listMembers(): Promise<Member[]> {
   return api<Member[]>("/api/v1/members");
+}
+
+export function getSession(): Promise<Session> {
+  return api<Session>("/api/v1/session");
+}
+
+export function getSkuFact(skuCode: string): Promise<ExactFactResult> {
+  return api<ExactFactResult>(
+    `/api/v1/knowledge/skus/${encodeURIComponent(skuCode)}`,
+  );
 }
 
 export function listApprovals(): Promise<Approval[]> {

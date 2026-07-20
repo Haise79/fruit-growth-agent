@@ -237,3 +237,32 @@ async def test_migration_0008_downgrade_removes_and_upgrade_restores_invariants(
         "ck_copilot_citations_type",
     }
     assert restored_index == "ix_merchant_knowledge_tenant_responsible_user"
+
+
+@pytest.mark.asyncio
+async def test_migration_0009_adds_non_null_timing_and_citation_provenance(
+    invariant_database: None,
+) -> None:
+    del invariant_database
+    async with SessionFactory() as session:
+        columns = {
+            (row.table_name, row.column_name, row.is_nullable)
+            for row in (
+                await session.execute(
+                    text(
+                        "SELECT table_name, column_name, is_nullable "
+                        "FROM information_schema.columns "
+                        "WHERE (table_name = 'copilot_cases' "
+                        "AND column_name = 'response_time_ms') "
+                        "OR (table_name = 'copilot_citation_snapshots' "
+                        "AND column_name IN "
+                        "('source_updated_at', 'retrieved_at'))"
+                    )
+                )
+            )
+        }
+    assert columns == {
+        ("copilot_cases", "response_time_ms", "NO"),
+        ("copilot_citation_snapshots", "source_updated_at", "NO"),
+        ("copilot_citation_snapshots", "retrieved_at", "NO"),
+    }

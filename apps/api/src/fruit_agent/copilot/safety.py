@@ -110,6 +110,13 @@ _SEVERE_HEALTH_TERMS = (
     "去世",
     "严重肿胀",
 )
+_COMPLETED_PUBLIC_ESCALATION_TERMS = (
+    "已经上热搜",
+    "已上热搜",
+    "went viral",
+    "has gone viral",
+    "already viral",
+)
 
 
 def _contains_any(message: str, terms: tuple[str, ...]) -> bool:
@@ -198,6 +205,15 @@ def classify_customer_message(
             risk=CopilotRisk.critical,
             requires_handoff=True,
             reasons=["severe_health_emergency"],
+        )
+
+    if _contains_any(message, _COMPLETED_PUBLIC_ESCALATION_TERMS):
+        return SafetyClassification(
+            stage=CopilotStage.aftersale,
+            intent=CopilotIntent.complaint,
+            risk=CopilotRisk.high,
+            requires_handoff=True,
+            reasons=["public_opinion_escalated"],
         )
 
     if _contains_any(

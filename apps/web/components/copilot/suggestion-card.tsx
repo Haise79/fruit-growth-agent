@@ -33,7 +33,10 @@ export function SuggestionCard({
   const [adoptError, setAdoptError] = useState<"copy" | "event" | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isAdopting, setIsAdopting] = useState(false);
+  const [rejectStatus, setRejectStatus] = useState("");
+  const [isRejecting, setIsRejecting] = useState(false);
   const adoptionKey = useRef<string | null>(null);
+  const rejectionKey = useRef<string | null>(null);
   const isDirty = text !== savedText;
 
   function getAdoptionKey() {
@@ -106,6 +109,30 @@ export function SuggestionCard({
     }
   }
 
+  async function reject() {
+    setIsRejecting(true);
+    setRejectStatus("");
+    rejectionKey.current ??=
+      `copilot:${caseId}:suggestion_rejected:${suggestion.id}:${crypto.randomUUID()}`;
+    try {
+      const event = await recordCopilotOutcome(
+        caseId,
+        {
+          event_type: "suggestion_rejected",
+          suggestion_id: suggestion.id,
+        },
+        rejectionKey.current,
+      );
+      rejectionKey.current = null;
+      await onOutcome(event);
+      setRejectStatus("已记录拒绝");
+    } catch {
+      setRejectStatus("拒绝记录失败，请重试");
+    } finally {
+      setIsRejecting(false);
+    }
+  }
+
   return (
     <article
       aria-label={`建议 ${suggestion.rank}`}
@@ -121,6 +148,11 @@ export function SuggestionCard({
           </strong>
           <span>置信度 {(suggestion.confidence * 100).toFixed(0)}%</span>
           {suggestion.degraded ? <span>降级建议</span> : null}
+          {suggestion.adoption_status ? (
+            <span>
+              {suggestion.adoption_status === "adopted" ? "已采纳" : "已拒绝"}
+            </span>
+          ) : null}
         </div>
         <label className="visually-hidden" htmlFor={`suggestion-${suggestion.id}`}>
           建议 {suggestion.rank} 内容
@@ -181,6 +213,18 @@ export function SuggestionCard({
                 ? "重试采纳并复制"
                 : "采纳并复制"}
           </button>
+          <button
+            className="text-button danger-button"
+            disabled={isRejecting}
+            onClick={reject}
+            type="button"
+          >
+            {isRejecting
+              ? "正在处理…"
+              : rejectStatus.includes("失败")
+                ? "重试拒绝建议"
+                : "拒绝建议"}
+          </button>
         </div>
         {isDirty ? (
           <p className="inline-status">请先保存修改，再采纳并复制</p>
@@ -199,6 +243,14 @@ export function SuggestionCard({
             role={adoptError ? "alert" : "status"}
           >
             {adoptStatus}
+          </p>
+        ) : null}
+        {rejectStatus ? (
+          <p
+            className={rejectStatus.includes("失败") ? "form-error" : "inline-status"}
+            role={rejectStatus.includes("失败") ? "alert" : "status"}
+          >
+            {rejectStatus}
           </p>
         ) : null}
       </div>

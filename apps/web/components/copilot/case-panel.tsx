@@ -6,6 +6,7 @@ import { recordCopilotOutcome } from "@/lib/api";
 import type {
   CopilotCase,
   CopilotOutcomeEvent,
+  CopilotOutcomeTimeline,
   CopilotOutcomeEventType,
 } from "@/lib/types";
 
@@ -19,7 +20,6 @@ import { SuggestionCard } from "./suggestion-card";
 
 type CasePanelProps = {
   currentCase: CopilotCase;
-  latencyMs: number | null;
   events: CopilotOutcomeEvent[];
   onOutcome: (event: CopilotOutcomeEvent) => Promise<void>;
 };
@@ -36,7 +36,6 @@ const actions: Array<{
 
 export function CasePanel({
   currentCase,
-  latencyMs,
   events,
   onOutcome,
 }: CasePanelProps) {
@@ -85,6 +84,13 @@ export function CasePanel({
   const isHandoff =
     currentCase.status === "handoff_required" ||
     currentCase.status === "degraded";
+  const timelineEvents: Array<CopilotOutcomeEvent | CopilotOutcomeTimeline> = [
+    ...events,
+    ...(currentCase.outcomes ?? []),
+  ].filter(
+    (event, index, all) =>
+      all.findIndex((candidate) => candidate.id === event.id) === index,
+  );
 
   return (
     <section className="case-detail" aria-labelledby="case-detail-title">
@@ -93,9 +99,9 @@ export function CasePanel({
           <h2 id="case-detail-title">处理结果</h2>
           <p>工单 {currentCase.id}</p>
         </div>
-        {latencyMs !== null ? (
-          <span className="latency">{latencyMs} 毫秒</span>
-        ) : null}
+        <span className="latency">
+          {currentCase.response_time_ms ?? 0} 毫秒
+        </span>
       </div>
 
       <dl className="classification-rail">
@@ -170,9 +176,9 @@ export function CasePanel({
         role="region"
       >
         <h3>本次操作记录</h3>
-        {events.length ? (
+        {timelineEvents.length ? (
           <ol>
-            {events.map((event) => (
+            {timelineEvents.map((event) => (
               <li key={event.id}>
                 <strong>{event.event_type}</strong>
                 <time dateTime={event.occurred_at}>

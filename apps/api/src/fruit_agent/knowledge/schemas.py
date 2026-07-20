@@ -35,6 +35,8 @@ class ProductSKURead(BaseModel):
     sales_regions: list[str] | None = None
     shipping_eta: str | None = None
     valid_until: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class KnowledgeItemCreate(BaseModel):

@@ -40,6 +40,62 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("hides maintenance controls using the current session permissions", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/session")) {
+        return jsonResponse({
+          user_id: OWNER_ID,
+          tenant_id: "33333333-3333-4333-8333-333333333333",
+          role: "support",
+          permissions: ["knowledge:read"],
+        });
+      }
+      if (url.endsWith("/api/v1/knowledge/items")) {
+        return jsonResponse([knowledgeItem()]);
+      }
+      throw new Error(`Unexpected request: GET ${url}`);
+    }),
+  );
+  render(<KnowledgeWorkspace />);
+  const row = await screen.findByRole("row", { name: /果园客服手册/ });
+  await waitFor(() => {
+    expect(screen.queryByRole("button", { name: "新增知识" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "编辑" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "批准" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "拒绝" })).not.toBeInTheDocument();
+  });
+});
+
+it("shows every conflicting SKU source for human resolution", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/knowledge/items")) return jsonResponse([]);
+      if (url.endsWith("/api/v1/session")) {
+        return jsonResponse({ permissions: ["knowledge:read"] });
+      }
+      if (url.endsWith("/api/v1/knowledge/skus/APPLE-001")) {
+        return jsonResponse({
+          status: "conflict",
+          conflict_source_ids: ["source-a", "source-b"],
+          requires_human: true,
+        });
+      }
+      throw new Error(`Unexpected request: GET ${url}`);
+    }),
+  );
+  render(<KnowledgeWorkspace />);
+  await userEvent.type(screen.getByLabelText("SKU 冲突查询"), "APPLE-001");
+  await userEvent.click(screen.getByRole("button", { name: "查询 SKU" }));
+  expect(await screen.findByText("source-a")).toBeInTheDocument();
+  expect(screen.getByText("source-b")).toBeInTheDocument();
+  expect(screen.getByText("需要人工处理")).toBeInTheDocument();
+});
+
 it("loads live knowledge rows with provenance, owner, status, freshness, and content", async () => {
   vi.stubGlobal(
     "fetch",
@@ -349,7 +405,7 @@ it("announces load failures and retries the list request", async () => {
   await waitFor(() =>
     expect(screen.getByText("果园客服手册")).toBeInTheDocument(),
   );
-  expect(attempt).toBe(2);
+  expect(attempt).toBe(3);
 });
 
 function localDateTimeValue(value: string): string {

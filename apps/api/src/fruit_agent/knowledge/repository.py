@@ -36,6 +36,14 @@ class KnowledgeRepository:
         )
         return list(rows)
 
+    async def list_sku_codes(self, tenant_id: UUID) -> list[str]:
+        rows = await self.session.scalars(
+            select(ProductSKU.sku_code)
+            .where(ProductSKU.tenant_id == tenant_id)
+            .distinct()
+        )
+        return list(rows)
+
     async def list_items(self, tenant_id: UUID) -> list[MerchantKnowledge]:
         rows = await self.session.scalars(
             select(MerchantKnowledge)

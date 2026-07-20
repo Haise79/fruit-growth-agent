@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -68,6 +69,19 @@ class CopilotCase(TenantOwnedMixin, Base):
     risk: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     risk_reasons: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    response_time_ms: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    handoff_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    conflict_source_ids: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
         default=list,
@@ -168,4 +182,6 @@ class CopilotCitationSnapshot(TenantOwnedMixin, Base):
     source_id: Mapped[UUID] = mapped_column(nullable=False)
     source_name: Mapped[str] = mapped_column(String(300), nullable=False)
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    source_updated_at: Mapped[datetime] = mapped_column(nullable=False)
+    retrieved_at: Mapped[datetime] = mapped_column(nullable=False)
     suggestion: Mapped[CopilotSuggestion] = relationship(back_populates="citations")

@@ -173,6 +173,54 @@ async def test_outcome_duplicate_returns_original_and_records_one_row(
 
 
 @pytest.mark.asyncio
+async def test_case_detail_returns_complete_timeline_and_derived_adoption_status(
+    outcomes_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = outcomes_context
+    case_id, suggestion_id = await _seed_case(tenant_a)
+    assert suggestion_id is not None
+    event_types = [
+        "suggestion_adopted",
+        "payment",
+        "refund",
+        "complaint",
+        "suggestion_rejected",
+        "case_closed",
+    ]
+
+    async for client in _client(session, tenant_a):
+        for index, event_type in enumerate(event_types):
+            response = await client.post(
+                f"/api/v1/copilot/cases/{case_id}/events",
+                headers={"Idempotency-Key": f"timeline-{index}"},
+                json={
+                    "event_type": event_type,
+                    **(
+                        {"suggestion_id": str(suggestion_id)}
+                        if event_type.startswith("suggestion_")
+                        else {}
+                    ),
+                },
+            )
+            assert response.status_code == 201
+        detail = await client.get(f"/api/v1/copilot/cases/{case_id}")
+
+    assert detail.status_code == 200
+    assert [item["event_type"] for item in detail.json()["outcomes"]] == event_types
+    assert detail.json()["suggestions"][0]["adoption_status"] == "rejected"
+    async with tenant_session(session, tenant_a.tenant_id):
+        event_count = await session.scalar(
+            select(func.count()).select_from(CopilotOutcomeEvent)
+        )
+        audit_count = await session.scalar(
+            select(func.count()).select_from(AuditEvent)
+        )
+    assert event_count == len(event_types)
+    assert audit_count == len(event_types)
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_outcome_rejects_foreign_case_and_suggestion(
     outcomes_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
 ) -> None:

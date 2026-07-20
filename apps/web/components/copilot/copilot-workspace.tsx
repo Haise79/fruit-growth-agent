@@ -21,7 +21,6 @@ export function CopilotWorkspace() {
   const [cases, setCases] = useState<CopilotCase[]>([]);
   const [currentCase, setCurrentCase] = useState<CopilotCase | null>(null);
   const [events, setEvents] = useState<CopilotOutcomeEvent[]>([]);
-  const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [requestError, setRequestError] = useState("");
@@ -63,10 +62,8 @@ export function CopilotWorkspace() {
   async function createCase(request: CopilotCaseCreate) {
     setIsSubmitting(true);
     setRequestError("");
-    const startedAt = performance.now();
     try {
       const created = await createCopilotCase(request);
-      setLatencyMs(Math.max(1, Math.round(performance.now() - startedAt)));
       setCurrentCase(created);
       setEvents([]);
       try {
@@ -135,7 +132,6 @@ export function CopilotWorkspace() {
     try {
       setCurrentCase(await getCopilotCase(caseId));
       setEvents([]);
-      setLatencyMs(null);
     } catch {
       setRequestError("工单详情加载失败，请重试");
     }
@@ -190,7 +186,6 @@ export function CopilotWorkspace() {
               key={currentCase.id}
               currentCase={currentCase}
               events={events}
-              latencyMs={latencyMs}
               onOutcome={handleOutcome}
             />
           ) : null}

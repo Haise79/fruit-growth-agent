@@ -54,7 +54,9 @@ class CopilotRepository:
             .limit(limit)
             .offset(offset)
         )
-        return list(rows)
+        cases = list(rows)
+        await self._attach_outcomes(tenant_id, cases)
+        return cases
 
     async def get_case(
         self,
@@ -74,7 +76,56 @@ class CopilotRepository:
             )
             .execution_options(populate_existing=True)
         )
-        return rows.one_or_none()
+        case = rows.one_or_none()
+        if case is not None:
+            await self._attach_outcomes(tenant_id, [case])
+        return case
+
+    async def _attach_outcomes(
+        self,
+        tenant_id: UUID,
+        cases: list[CopilotCase],
+    ) -> None:
+        if not cases:
+            return
+        case_ids = [case.id for case in cases]
+        rows = await self.session.scalars(
+            select(CopilotOutcomeEvent)
+            .where(
+                CopilotOutcomeEvent.tenant_id == tenant_id,
+                CopilotOutcomeEvent.case_id.in_(case_ids),
+            )
+            .order_by(
+                CopilotOutcomeEvent.occurred_at,
+                CopilotOutcomeEvent.created_at,
+                CopilotOutcomeEvent.id,
+            )
+        )
+        outcomes = list(rows)
+        by_case: dict[UUID, list[CopilotOutcomeEvent]] = {
+            case_id: [] for case_id in case_ids
+        }
+        adoption_by_suggestion: dict[UUID, str] = {}
+        for outcome in outcomes:
+            by_case[outcome.case_id].append(outcome)
+            if (
+                outcome.suggestion_id is not None
+                and outcome.event_type
+                in {"suggestion_adopted", "suggestion_rejected"}
+            ):
+                adoption_by_suggestion[outcome.suggestion_id] = (
+                    "adopted"
+                    if outcome.event_type == "suggestion_adopted"
+                    else "rejected"
+                )
+        for case in cases:
+            setattr(case, "outcomes", by_case[case.id])
+            for suggestion in case.suggestions:
+                setattr(
+                    suggestion,
+                    "adoption_status",
+                    adoption_by_suggestion.get(suggestion.id),
+                )
 
     async def get_case_for_update(
         self,

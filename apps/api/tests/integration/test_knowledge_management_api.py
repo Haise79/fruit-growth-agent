@@ -6,9 +6,11 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fruit_agent.app import app
+from fruit_agent.audit.models import AuditEvent
 from fruit_agent.config import get_settings
 from fruit_agent.db import SessionFactory, engine, get_session, tenant_session
 from fruit_agent.identity.dependencies import get_principal
@@ -118,6 +120,39 @@ def _knowledge_payload(responsible_user_id: UUID) -> dict[str, str]:
     }
 
 
+@pytest.mark.asyncio
+async def test_session_exposes_current_role_permissions(
+    knowledge_management_context: tuple[
+        TenantPrincipal, TenantPrincipal, TenantPrincipal, AsyncSession
+    ],
+) -> None:
+    operator, _, _, session = knowledge_management_context
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: operator
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/v1/session")
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json() == {
+        "user_id": str(operator.user_id),
+        "tenant_id": str(operator.tenant_id),
+        "role": "operator",
+        "permissions": [
+            "approval:request",
+            "copilot:use",
+            "imports:write",
+            "knowledge:read",
+            "knowledge:write",
+            "members:read",
+        ],
+    }
+    await session.close()
+
+
 class _RecordingEmbeddingProvider:
     model_name = "semantic-test"
     model_version = "2026-07"
@@ -128,6 +163,101 @@ class _RecordingEmbeddingProvider:
     def embed(self, text: str) -> list[float]:
         self.calls.append(text)
         return [1.0, *([0.0] * 1535)]
+
+
+@pytest.mark.asyncio
+async def test_knowledge_mutations_emit_redacted_immutable_audits(
+    knowledge_management_context: tuple[
+        TenantPrincipal, TenantPrincipal, TenantPrincipal, AsyncSession
+    ],
+) -> None:
+    operator, owner, _, session = knowledge_management_context
+    payload = _knowledge_payload(operator.user_id)
+    payload["content"] = "Contact 13800138000 about storage."
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: operator
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                "/api/v1/knowledge/items",
+                json=payload,
+            )
+            updated = await client.patch(
+                f"/api/v1/knowledge/items/{created.json()['id']}",
+                json={"content": "Ask contact wxid_knowledge123."},
+            )
+            app.dependency_overrides[get_principal] = lambda: owner
+            reviewed = await client.post(
+                f"/api/v1/knowledge/items/{created.json()['id']}/review",
+                json={"review_status": "approved"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert created.status_code == 201
+    assert updated.status_code == 200
+    assert reviewed.status_code == 200
+    async with tenant_session(session, operator.tenant_id):
+        audits = list(
+            await session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.entity_id == UUID(created.json()["id"]))
+                .order_by(AuditEvent.created_at)
+            )
+        )
+    assert [event.action for event in audits] == [
+        "knowledge.created",
+        "knowledge.updated",
+        "knowledge.reviewed",
+    ]
+    rendered = repr([(event.before, event.after) for event in audits])
+    assert "13800138000" not in rendered
+    assert "wxid_knowledge123" not in rendered
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_search_returns_only_current_tenant_approved_narrative_items(
+    knowledge_management_context: tuple[
+        TenantPrincipal, TenantPrincipal, TenantPrincipal, AsyncSession
+    ],
+) -> None:
+    operator, owner, other_tenant, session = knowledge_management_context
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: operator
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                "/api/v1/knowledge/items",
+                json=_knowledge_payload(operator.user_id),
+            )
+            app.dependency_overrides[get_principal] = lambda: owner
+            await client.post(
+                f"/api/v1/knowledge/items/{created.json()['id']}/review",
+                json={"review_status": "approved"},
+            )
+            app.dependency_overrides[get_principal] = lambda: operator
+            own = await client.get(
+                "/api/v1/knowledge/items/search",
+                params={"q": "How should Fuji apples be stored?", "limit": 5},
+            )
+            app.dependency_overrides[get_principal] = lambda: other_tenant
+            other = await client.get(
+                "/api/v1/knowledge/items/search",
+                params={"q": "How should Fuji apples be stored?", "limit": 5},
+            )
+    finally:
+        app.dependency_overrides.clear()
+    assert own.status_code == 200
+    assert [item["id"] for item in own.json()] == [created.json()["id"]]
+    assert other.status_code == 200
+    assert other.json() == []
+    await session.close()
 
 
 @pytest.mark.asyncio

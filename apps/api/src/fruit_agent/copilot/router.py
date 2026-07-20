@@ -1,4 +1,5 @@
 from typing import Annotated
+from time import perf_counter
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -50,6 +51,7 @@ def _service(
 )
 async def create_case(
     body: CopilotCaseCreate,
+    http_request: Request,
     principal: Annotated[
         TenantPrincipal,
         Depends(require_permissions("copilot:use")),
@@ -65,6 +67,7 @@ async def create_case(
     ],
 ) -> CopilotCaseRead:
     async with tenant_session(session, principal.tenant_id):
+        started_at = perf_counter()
         service = _service(session, providers, embedding_provider)
         case = await service.create_case(
             tenant_id=principal.tenant_id,
@@ -74,7 +77,31 @@ async def create_case(
         loaded_case = await service.get_case(principal.tenant_id, case.id)
         if loaded_case is None:
             raise RuntimeError("newly created copilot case was not found")
+        loaded_case.response_time_ms = max(
+            0,
+            round((perf_counter() - started_at) * 1000),
+        )
+        await service.repository.flush()
+        await session.refresh(
+            loaded_case,
+            attribute_names=["response_time_ms", "updated_at"],
+        )
         response = CopilotCaseRead.model_validate(loaded_case)
+        await AuditService(
+            session=session,
+            principal=principal,
+            request_id=getattr(
+                http_request.state,
+                "request_id",
+                get_request_id(),
+            ),
+        ).record(
+            action="copilot_case.created",
+            entity_type="copilot_case",
+            entity_id=case.id,
+            before={},
+            after=response.model_dump(mode="json"),
+        )
     return response
 
 
@@ -140,6 +167,7 @@ async def edit_suggestion(
     case_id: UUID,
     suggestion_id: UUID,
     body: CopilotSuggestionEdit,
+    http_request: Request,
     principal: Annotated[
         TenantPrincipal,
         Depends(require_permissions("copilot:use")),
@@ -151,7 +179,18 @@ async def edit_suggestion(
     ],
 ) -> CopilotSuggestionRead:
     async with tenant_session(session, principal.tenant_id):
-        suggestion = await _service(session, providers).edit_suggestion(
+        service = _service(session, providers)
+        existing = await service.repository.get_suggestion(
+            principal.tenant_id,
+            case_id,
+            suggestion_id,
+        )
+        before = (
+            CopilotSuggestionRead.model_validate(existing).model_dump(mode="json")
+            if existing is not None
+            else {}
+        )
+        suggestion = await service.edit_suggestion(
             tenant_id=principal.tenant_id,
             case_id=case_id,
             suggestion_id=suggestion_id,
@@ -163,6 +202,21 @@ async def edit_suggestion(
                 detail="copilot suggestion not found",
             )
         response = CopilotSuggestionRead.model_validate(suggestion)
+        await AuditService(
+            session=session,
+            principal=principal,
+            request_id=getattr(
+                http_request.state,
+                "request_id",
+                get_request_id(),
+            ),
+        ).record(
+            action="copilot_suggestion.edited",
+            entity_type="copilot_suggestion",
+            entity_id=suggestion.id,
+            before=before,
+            after=response.model_dump(mode="json"),
+        )
     return response
 
 

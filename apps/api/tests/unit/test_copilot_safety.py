@@ -44,6 +44,23 @@ def test_public_opinion_threat_without_bulk_spoilage_requires_handoff() -> None:
     assert result.requires_handoff is True
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "这件事已经上热搜",
+        "This complaint went viral",
+    ],
+)
+def test_completed_public_opinion_escalation_requires_handoff(
+    message: str,
+) -> None:
+    result = classify_customer_message(message)
+
+    assert result.intent is CopilotIntent.complaint
+    assert result.risk in {CopilotRisk.high, CopilotRisk.critical}
+    assert result.requires_handoff is True
+
+
 def test_regulator_complaint_requires_handoff() -> None:
     result = classify_customer_message("我要向市场监管局和消协投诉你们")
 

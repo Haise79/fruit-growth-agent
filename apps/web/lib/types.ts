@@ -88,6 +88,8 @@ export type CopilotCitation = {
   source_id: string;
   source_name: string;
   snapshot: Record<string, unknown>;
+  source_updated_at: string;
+  retrieved_at: string;
   created_at: string;
 };
 
@@ -100,6 +102,7 @@ export type CopilotSuggestion = {
   confidence: number;
   risk_tip: string | null;
   degraded: boolean;
+  adoption_status: "adopted" | "rejected" | null;
   citations: CopilotCitation[];
   created_at: string;
   updated_at: string;
@@ -116,7 +119,11 @@ export type CopilotCase = {
   risk: CopilotRisk;
   status: CopilotCaseStatus;
   risk_reasons: string[];
+  response_time_ms: number;
+  handoff_reason: string | null;
+  conflict_source_ids: string[];
   suggestions: CopilotSuggestion[];
+  outcomes: CopilotOutcomeTimeline[];
   created_at: string;
   updated_at: string;
 };
@@ -150,4 +157,22 @@ export type CopilotOutcomeEvent = {
   metadata: Record<string, unknown>;
   created_at: string;
   case_status: CopilotCaseStatus;
+};
+
+export type CopilotOutcomeTimeline = Omit<
+  CopilotOutcomeEvent,
+  "case_id" | "case_status"
+>;
+
+export type Session = {
+  user_id: string;
+  tenant_id: string;
+  role: "owner" | "operator" | "support" | "implementer";
+  permissions: string[];
+};
+
+export type ExactFactResult = {
+  status: "ok" | "expired" | "conflict" | "not_found";
+  conflict_source_ids: string[];
+  requires_human: boolean;
 };

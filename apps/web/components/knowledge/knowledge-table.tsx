@@ -11,6 +11,8 @@ import type {
 
 type KnowledgeTableProps = {
   items: KnowledgeItem[];
+  canWrite?: boolean;
+  canReview?: boolean;
   pendingId: string | null;
   onEdit: (
     knowledgeId: string,
@@ -51,6 +53,8 @@ const knowledgeTypes = Object.entries(typeLabels) as Array<
 
 export function KnowledgeTable({
   items,
+  canWrite = true,
+  canReview = true,
   pendingId,
   onEdit,
   onReview,
@@ -230,7 +234,7 @@ export function KnowledgeTable({
                 </td>
                 <td>
                   <div className="table-actions">
-                    {isEditing ? (
+                    {canWrite && isEditing ? (
                       <>
                         <button
                           className="text-button"
@@ -254,7 +258,7 @@ export function KnowledgeTable({
                           取消
                         </button>
                       </>
-                    ) : (
+                    ) : canWrite ? (
                       <button
                         className="text-button"
                         disabled={isPending}
@@ -263,23 +267,27 @@ export function KnowledgeTable({
                       >
                         编辑
                       </button>
-                    )}
-                    <button
-                      className="text-button"
-                      disabled={isPending}
-                      onClick={() => onReview(item.id, "approved")}
-                      type="button"
-                    >
-                      批准
-                    </button>
-                    <button
-                      className="text-button danger-button"
-                      disabled={isPending}
-                      onClick={() => onReview(item.id, "rejected")}
-                      type="button"
-                    >
-                      拒绝
-                    </button>
+                    ) : null}
+                    {canReview ? (
+                      <>
+                        <button
+                          className="text-button"
+                          disabled={isPending}
+                          onClick={() => onReview(item.id, "approved")}
+                          type="button"
+                        >
+                          批准
+                        </button>
+                        <button
+                          className="text-button danger-button"
+                          disabled={isPending}
+                          onClick={() => onReview(item.id, "rejected")}
+                          type="button"
+                        >
+                          拒绝
+                        </button>
+                      </>
+                    ) : null}
                   </div>
                 </td>
               </tr>
