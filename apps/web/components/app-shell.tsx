@@ -8,6 +8,7 @@ const navigation = [
   { href: "/", label: "概览", icon: "⌂" },
   { href: "/members", label: "成员权限", icon: "♙" },
   { href: "/knowledge", label: "知识与商品", icon: "□" },
+  { href: "/copilot", label: "客服 Copilot", icon: "◎" },
   { href: "/imports", label: "CSV 导入", icon: "▤" },
   { href: "/approvals", label: "人工审批", icon: "◇" },
 ];

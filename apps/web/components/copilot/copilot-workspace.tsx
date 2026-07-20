@@ -1,0 +1,166 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
+import {
+  createCopilotCase,
+  getCopilotCase,
+  listCopilotCases,
+} from "@/lib/api";
+import type {
+  CopilotCase,
+  CopilotCaseCreate,
+  CopilotOutcomeEvent,
+} from "@/lib/types";
+
+import { CaseForm } from "./case-form";
+import { CasePanel } from "./case-panel";
+import { statusLabels } from "./labels";
+
+export function CopilotWorkspace() {
+  const [cases, setCases] = useState<CopilotCase[]>([]);
+  const [currentCase, setCurrentCase] = useState<CopilotCase | null>(null);
+  const [events, setEvents] = useState<CopilotOutcomeEvent[]>([]);
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [requestError, setRequestError] = useState("");
+
+  const refreshCases = useCallback(async () => {
+    const latest = await listCopilotCases();
+    setCases(latest);
+    setCurrentCase((selected) => {
+      if (selected) {
+        return latest.find((item) => item.id === selected.id) ?? selected;
+      }
+      return latest[0] ?? null;
+    });
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    listCopilotCases()
+      .then((latest) => {
+        if (!active) return;
+        setCases(latest);
+        setCurrentCase(latest[0] ?? null);
+      })
+      .catch(() => {
+        if (active) {
+          setRequestError("近期工单加载失败，请稍后重试");
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function createCase(request: CopilotCaseCreate) {
+    setIsSubmitting(true);
+    setRequestError("");
+    const startedAt = performance.now();
+    try {
+      const created = await createCopilotCase(request);
+      setLatencyMs(Math.max(1, Math.round(performance.now() - startedAt)));
+      setCurrentCase(created);
+      setEvents([]);
+      await refreshCases();
+    } catch {
+      setRequestError("生成失败，请稍后重试");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleOutcome(event: CopilotOutcomeEvent) {
+    setEvents((current) => [event, ...current]);
+    const [detail] = await Promise.all([
+      getCopilotCase(event.case_id),
+      refreshCases(),
+    ]);
+    setCurrentCase(detail);
+  }
+
+  async function selectCase(caseId: string) {
+    setRequestError("");
+    try {
+      setCurrentCase(await getCopilotCase(caseId));
+      setEvents([]);
+      setLatencyMs(null);
+    } catch {
+      setRequestError("工单详情加载失败，请重试");
+    }
+  }
+
+  return (
+    <div className="page copilot-page">
+      <div className="page-title-row">
+        <div>
+          <h1>客服 Copilot</h1>
+          <p className="page-lead">
+            基于已审核且有效的知识生成建议；高风险和证据不足场景强制转人工。
+          </p>
+        </div>
+        <p className="safety-note">仅生成草稿 · 不执行外部动作</p>
+      </div>
+
+      <div className="copilot-layout">
+        <div className="copilot-primary">
+          <CaseForm
+            isSubmitting={isSubmitting}
+            onSubmit={createCase}
+            requestFailed={requestError === "生成失败，请稍后重试"}
+          />
+          {requestError ? (
+            <p className="form-error page-alert" role="alert">
+              {requestError}
+            </p>
+          ) : null}
+          {currentCase ? (
+            <CasePanel
+              currentCase={currentCase}
+              events={events}
+              latencyMs={latencyMs}
+              onOutcome={handleOutcome}
+            />
+          ) : null}
+        </div>
+
+        <aside className="recent-cases" aria-labelledby="recent-cases-title">
+          <div className="section-heading">
+            <div>
+              <h2 id="recent-cases-title">近期工单</h2>
+              <p>按最近更新时间排列</p>
+            </div>
+          </div>
+          {isLoading ? (
+            <p role="status">正在加载近期工单…</p>
+          ) : cases.length ? (
+            <ol>
+              {cases.map((item) => (
+                <li key={item.id}>
+                  <button
+                    aria-current={currentCase?.id === item.id ? "true" : undefined}
+                    onClick={() => selectCase(item.id)}
+                    type="button"
+                  >
+                    <span>{item.message}</span>
+                    <small>
+                      {statusLabels[item.status]} ·{" "}
+                      {new Date(item.updated_at).toLocaleString("zh-CN")}
+                    </small>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p>暂无近期工单。</p>
+          )}
+        </aside>
+      </div>
+    </div>
+  );
+}
