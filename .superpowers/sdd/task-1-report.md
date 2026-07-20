@@ -46,6 +46,30 @@ Result: `7 passed`.
 
 ## Commit and concerns
 
-Commit hash: recorded in the task handoff after this report is committed.
+Initial implementation commit: `bd547fd1af34cc7dcb28f4d769078284b9c7469c`.
 
 No implementation concerns.
+
+## Review-fix evidence
+
+### RED phase
+
+`D:\\Agent\\电商系统\\fruit-growth-agent\\.worktrees\\weeks-1-2-foundation\\apps\\api\\.venv\\Scripts\\python.exe -m pytest tests/unit/test_knowledge_freshness.py tests/integration/test_knowledge_management_api.py -q`
+
+Result: `5 failed, 5 passed`, with the expected failures:
+
+- a SKU differing only in `variety` was returned as `ok`;
+- explicit `null` updates returned `200` or an uncaught database-error `500` instead of `422`;
+- a tenant-B responsible user was accepted for a tenant-A knowledge record.
+
+### GREEN and full verification
+
+- Focused: `python -m pytest tests/unit/test_knowledge_freshness.py tests/integration/test_knowledge_management_api.py -q` — `10 passed`.
+- Full API verification: `python -m pytest tests/unit tests/integration tests/security -q` — `55 passed`.
+- `python -m ruff check src tests migrations` — `All checks passed!`.
+- `python -m mypy src tests` — `Success: no issues found in 68 source files`.
+- `git diff --check` — no whitespace errors.
+
+### Review-fix commit
+
+`9141623693064ca3e282a53a35c56cda9827693a` — hardens SKU conflict comparison, nullable update validation, responsible-member validation, and cross-tenant API coverage.
