@@ -80,6 +80,31 @@ _PRESALE_TERMS = (
     "is it safe",
 )
 
+_SEVERE_HEALTH_TERMS = (
+    "anaphylactic shock",
+    "anaphylaxis",
+    "stopped breathing",
+    "not breathing",
+    "no longer breathing",
+    "unconscious",
+    "lost consciousness",
+    "ambulance",
+    "death",
+    "died",
+    "dead after",
+    "severe swelling",
+    "过敏性休克",
+    "停止呼吸",
+    "没有呼吸",
+    "无法呼吸",
+    "失去意识",
+    "昏迷",
+    "救护车",
+    "死亡",
+    "去世",
+    "严重肿胀",
+)
+
 
 def _contains_any(message: str, terms: tuple[str, ...]) -> bool:
     lowered = message.casefold()
@@ -158,6 +183,15 @@ def classify_customer_message(
             risk=CopilotRisk.high,
             requires_handoff=True,
             reasons=["knowledge_conflict"],
+        )
+
+    if _contains_any(message, _SEVERE_HEALTH_TERMS):
+        return SafetyClassification(
+            stage=CopilotStage.aftersale,
+            intent=CopilotIntent.health_safety,
+            risk=CopilotRisk.critical,
+            requires_handoff=True,
+            reasons=["severe_health_emergency"],
         )
 
     if _contains_any(

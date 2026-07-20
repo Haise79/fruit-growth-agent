@@ -75,6 +75,7 @@ class _PredictionEvaluationRow(BaseModel):
     handoff_required: StrictBool
     citation_ids: list[StrictStr]
     recommended_sku_code: StrictStr | None = None
+    factual_claims_valid: StrictBool | None = None
 
     @field_validator("message", "recommended_sku_code")
     @classmethod
@@ -118,7 +119,15 @@ def _pairs(
 ) -> Iterator[tuple[Mapping[str, Any], Mapping[str, Any]]]:
     if len(expected) != len(predictions):
         raise EvaluationInputError("expected and prediction JSONL files must contain the same number of rows")
-    return zip(expected, predictions, strict=True)
+    for line_number, (row, prediction) in enumerate(
+        zip(expected, predictions, strict=True),
+        start=1,
+    ):
+        if row.get("message") != prediction.get("message"):
+            raise EvaluationInputError(
+                f"prediction line {line_number} message does not match expected"
+            )
+        yield row, prediction
 
 
 def stage_accuracy(expected: Sequence[Mapping[str, Any]], predictions: Sequence[Mapping[str, Any]]) -> float:
@@ -131,7 +140,14 @@ def intent_accuracy(expected: Sequence[Mapping[str, Any]], predictions: Sequence
 
 def high_risk_recall(expected: Sequence[Mapping[str, Any]], predictions: Sequence[Mapping[str, Any]]) -> float:
     high_risk = [(row, prediction) for row, prediction in _pairs(expected, predictions) if row["risk_level"] in {"high", "critical"}]
-    return _ratio(sum(prediction.get("risk_level") in {"high", "critical"} for _, prediction in high_risk), len(high_risk))
+    return _ratio(
+        sum(
+            prediction.get("risk_level") in {"high", "critical"}
+            and prediction.get("handoff_required") is True
+            for _, prediction in high_risk
+        ),
+        len(high_risk),
+    )
 
 
 def citation_validity(expected: Sequence[Mapping[str, Any]], predictions: Sequence[Mapping[str, Any]]) -> float:
@@ -156,6 +172,7 @@ def factual_error_rate(expected: Sequence[Mapping[str, Any]], predictions: Seque
     return _ratio(
         sum(
             prediction.get("recommended_sku_code") != row["expected_sku_code"]
+            or prediction.get("factual_claims_valid") is False
             for row, prediction in labeled_pairs
         ),
         len(labeled_pairs),

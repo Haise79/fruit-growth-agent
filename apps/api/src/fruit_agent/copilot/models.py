@@ -33,6 +33,25 @@ class CopilotCase(TenantOwnedMixin, Base):
             "id",
             name="uq_copilot_cases_tenant_id_id",
         ),
+        CheckConstraint(
+            "stage IN ('presale', 'aftersale', 'unknown')",
+            name="ck_copilot_cases_stage",
+        ),
+        CheckConstraint(
+            "intent IN ('product_info', 'recommendation', 'gift', "
+            "'delivery', 'storage', 'damage', 'refund', 'complaint', "
+            "'health_safety', 'other')",
+            name="ck_copilot_cases_intent",
+        ),
+        CheckConstraint(
+            "risk IN ('low', 'medium', 'high', 'critical')",
+            name="ck_copilot_cases_risk",
+        ),
+        CheckConstraint(
+            "status IN ('suggestions_ready', 'handoff_required', "
+            "'degraded', 'closed')",
+            name="ck_copilot_cases_status",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -131,6 +150,10 @@ class CopilotCitationSnapshot(TenantOwnedMixin, Base):
             ("tenant_id", "suggestion_id"),
             ("copilot_suggestions.tenant_id", "copilot_suggestions.id"),
             name="fk_copilot_citations_tenant_suggestion",
+        ),
+        CheckConstraint(
+            "citation_type IN ('sku', 'knowledge')",
+            name="ck_copilot_citations_type",
         ),
     )
 

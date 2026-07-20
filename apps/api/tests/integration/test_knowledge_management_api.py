@@ -117,6 +117,18 @@ def _knowledge_payload(responsible_user_id: UUID) -> dict[str, str]:
     }
 
 
+class _RecordingEmbeddingProvider:
+    model_name = "semantic-test"
+    model_version = "2026-07"
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def embed(self, text: str) -> list[float]:
+        self.calls.append(text)
+        return [1.0, *([0.0] * 1535)]
+
+
 @pytest.mark.asyncio
 async def test_knowledge_create_list_edit_and_review_permissions(
     knowledge_management_context: tuple[
@@ -170,6 +182,37 @@ async def test_knowledge_create_list_edit_and_review_permissions(
     assert edited.status_code == 200
     assert edited.json()["content"] == "Keep Fuji apples cold and dry."
     assert edited.json()["review_status"] == "draft"
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_knowledge_write_uses_injected_embedding_provider_and_persists_version(
+    knowledge_management_context: tuple[
+        TenantPrincipal, TenantPrincipal, TenantPrincipal, AsyncSession
+    ],
+) -> None:
+    operator, _, _, session = knowledge_management_context
+    provider = _RecordingEmbeddingProvider()
+    app.state.embedding_provider = provider
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: operator
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                "/api/v1/knowledge/items",
+                json=_knowledge_payload(operator.user_id),
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.embedding_provider = DeterministicEmbeddingProvider()
+
+    assert created.status_code == 201
+    assert provider.calls == ["Store Fuji apples in the refrigerator."]
+    assert created.json()["embedding_model"] == provider.model_name
+    assert created.json()["embedding_version"] == provider.model_version
     await session.close()
 
 

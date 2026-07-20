@@ -4,17 +4,30 @@ import { useEffect, useState } from "react";
 
 import type {
   KnowledgeItem,
+  KnowledgeItemUpdate,
   KnowledgeReviewStatus,
+  KnowledgeType,
 } from "@/lib/types";
 
 type KnowledgeTableProps = {
   items: KnowledgeItem[];
   pendingId: string | null;
-  onEdit: (knowledgeId: string, content: string) => Promise<boolean>;
+  onEdit: (
+    knowledgeId: string,
+    changes: KnowledgeItemUpdate,
+  ) => Promise<boolean>;
   onReview: (
     knowledgeId: string,
     status: Exclude<KnowledgeReviewStatus, "draft">,
   ) => Promise<void>;
+};
+
+type KnowledgeEditDraft = {
+  knowledgeType: KnowledgeType;
+  content: string;
+  sourceName: string;
+  responsibleUserId: string;
+  validUntil: string;
 };
 
 const typeLabels: Record<KnowledgeItem["knowledge_type"], string> = {
@@ -32,6 +45,10 @@ const reviewLabels: Record<KnowledgeReviewStatus, string> = {
   rejected: "已拒绝",
 };
 
+const knowledgeTypes = Object.entries(typeLabels) as Array<
+  [KnowledgeType, string]
+>;
+
 export function KnowledgeTable({
   items,
   pendingId,
@@ -39,18 +56,51 @@ export function KnowledgeTable({
   onReview,
 }: KnowledgeTableProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingContent, setEditingContent] = useState("");
+  const [draft, setDraft] = useState<KnowledgeEditDraft | null>(null);
   const now = useNow();
 
   function startEditing(item: KnowledgeItem) {
     setEditingId(item.id);
-    setEditingContent(item.content);
+    setDraft({
+      knowledgeType: item.knowledge_type,
+      content: item.content,
+      sourceName: item.source_name,
+      responsibleUserId: item.responsible_user_id ?? "",
+      validUntil: item.valid_until ? toDateTimeLocal(item.valid_until) : "",
+    });
+  }
+
+  function updateDraft(changes: Partial<KnowledgeEditDraft>) {
+    setDraft((current) => (current ? { ...current, ...changes } : current));
   }
 
   async function saveEditing() {
-    if (!editingId) return;
-    const saved = await onEdit(editingId, editingContent.trim());
-    if (saved) setEditingId(null);
+    if (
+      !editingId ||
+      !draft ||
+      !draft.content.trim() ||
+      !draft.sourceName.trim() ||
+      !draft.responsibleUserId.trim() ||
+      !draft.validUntil
+    ) {
+      return;
+    }
+    const saved = await onEdit(editingId, {
+      knowledge_type: draft.knowledgeType,
+      source_name: draft.sourceName.trim(),
+      responsible_user_id: draft.responsibleUserId.trim(),
+      valid_until: new Date(draft.validUntil).toISOString(),
+      content: draft.content.trim(),
+    });
+    if (saved) {
+      setEditingId(null);
+      setDraft(null);
+    }
+  }
+
+  function cancelEditing() {
+    setEditingId(null);
+    setDraft(null);
   }
 
   return (
@@ -72,14 +122,65 @@ export function KnowledgeTable({
             const expired =
               !item.valid_until ||
               new Date(item.valid_until).getTime() <= now;
-            const isEditing = editingId === item.id;
+            const isEditing = editingId === item.id && draft !== null;
             const isPending = pendingId === item.id;
             return (
               <tr key={item.id}>
-                <td>{typeLabels[item.knowledge_type]}</td>
                 <td>
-                  <strong>{item.source_name}</strong>
-                  <small>{item.responsible_user_id ?? "未指定责任人"}</small>
+                  {isEditing ? (
+                    <label>
+                      <span className="visually-hidden">编辑知识类型</span>
+                      <select
+                        onChange={(event) =>
+                          updateDraft({
+                            knowledgeType: event.target.value as KnowledgeType,
+                          })
+                        }
+                        value={draft.knowledgeType}
+                      >
+                        {knowledgeTypes.map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    typeLabels[item.knowledge_type]
+                  )}
+                </td>
+                <td>
+                  {isEditing ? (
+                    <>
+                      <label>
+                        <span className="visually-hidden">编辑来源名称</span>
+                        <input
+                          onChange={(event) =>
+                            updateDraft({ sourceName: event.target.value })
+                          }
+                          value={draft.sourceName}
+                        />
+                      </label>
+                      <label>
+                        <span className="visually-hidden">编辑责任人 ID</span>
+                        <input
+                          onChange={(event) =>
+                            updateDraft({
+                              responsibleUserId: event.target.value,
+                            })
+                          }
+                          value={draft.responsibleUserId}
+                        />
+                      </label>
+                    </>
+                  ) : (
+                    <>
+                      <strong>{item.source_name}</strong>
+                      <small>
+                        {item.responsible_user_id ?? "未指定责任人"}
+                      </small>
+                    </>
+                  )}
                 </td>
                 <td>
                   <span className={`review-status status-${item.review_status}`}>
@@ -88,8 +189,27 @@ export function KnowledgeTable({
                 </td>
                 <td>{formatDate(item.updated_at)}</td>
                 <td className={expired ? "error-text" : ""}>
-                  <span>{item.valid_until ? formatDate(item.valid_until) : "无有效期"}</span>
-                  <small>{expired ? "已过期" : "有效"}</small>
+                  {isEditing ? (
+                    <label>
+                      <span className="visually-hidden">编辑有效期</span>
+                      <input
+                        onChange={(event) =>
+                          updateDraft({ validUntil: event.target.value })
+                        }
+                        type="datetime-local"
+                        value={draft.validUntil}
+                      />
+                    </label>
+                  ) : (
+                    <>
+                      <span>
+                        {item.valid_until
+                          ? formatDate(item.valid_until)
+                          : "无有效期"}
+                      </span>
+                      <small>{expired ? "已过期" : "有效"}</small>
+                    </>
+                  )}
                 </td>
                 <td className="knowledge-content-cell">
                   {isEditing ? (
@@ -98,10 +218,10 @@ export function KnowledgeTable({
                       <textarea
                         aria-label="编辑知识内容"
                         onChange={(event) =>
-                          setEditingContent(event.target.value)
+                          updateDraft({ content: event.target.value })
                         }
                         rows={4}
-                        value={editingContent}
+                        value={draft.content}
                       />
                     </label>
                   ) : (
@@ -114,7 +234,13 @@ export function KnowledgeTable({
                       <>
                         <button
                           className="text-button"
-                          disabled={isPending || !editingContent.trim()}
+                          disabled={
+                            isPending ||
+                            !draft.content.trim() ||
+                            !draft.sourceName.trim() ||
+                            !draft.responsibleUserId.trim() ||
+                            !draft.validUntil
+                          }
                           onClick={saveEditing}
                           type="button"
                         >
@@ -122,7 +248,7 @@ export function KnowledgeTable({
                         </button>
                         <button
                           className="text-button"
-                          onClick={() => setEditingId(null)}
+                          onClick={cancelEditing}
                           type="button"
                         >
                           取消
@@ -183,4 +309,12 @@ function formatDate(value: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
+
+function toDateTimeLocal(value: string): string {
+  const instant = new Date(value);
+  const local = new Date(
+    instant.getTime() - instant.getTimezoneOffset() * 60_000,
+  );
+  return local.toISOString().slice(0, 16);
 }

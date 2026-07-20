@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fruit_agent.db import get_session, tenant_session
 from fruit_agent.identity.dependencies import require_permissions
 from fruit_agent.identity.schemas import TenantPrincipal
+from fruit_agent.knowledge.dependencies import get_embedding_provider
+from fruit_agent.knowledge.embeddings import EmbeddingProvider
 from fruit_agent.knowledge.models import ReviewStatus
 from fruit_agent.knowledge.repository import KnowledgeRepository
 from fruit_agent.knowledge.schemas import (
@@ -51,10 +53,22 @@ async def create_knowledge_item(
         Depends(require_permissions("knowledge:write")),
     ],
     session: Annotated[AsyncSession, Depends(get_session)],
+    embedding_provider: Annotated[
+        EmbeddingProvider | None,
+        Depends(get_embedding_provider),
+    ],
 ) -> KnowledgeItemRead:
+    if embedding_provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="embedding provider is not configured",
+        )
     try:
         async with tenant_session(session, principal.tenant_id):
-            record = await KnowledgeService(KnowledgeRepository(session)).create_item(
+            record = await KnowledgeService(
+                KnowledgeRepository(session),
+                embedding_provider,
+            ).create_item(
                 tenant_id=principal.tenant_id,
                 item=item,
             )
@@ -75,10 +89,22 @@ async def update_knowledge_item(
         Depends(require_permissions("knowledge:write")),
     ],
     session: Annotated[AsyncSession, Depends(get_session)],
+    embedding_provider: Annotated[
+        EmbeddingProvider | None,
+        Depends(get_embedding_provider),
+    ],
 ) -> KnowledgeItemRead:
+    if embedding_provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="embedding provider is not configured",
+        )
     try:
         async with tenant_session(session, principal.tenant_id):
-            record = await KnowledgeService(KnowledgeRepository(session)).update_item(
+            record = await KnowledgeService(
+                KnowledgeRepository(session),
+                embedding_provider,
+            ).update_item(
                 tenant_id=principal.tenant_id,
                 knowledge_id=knowledge_id,
                 changes=changes,

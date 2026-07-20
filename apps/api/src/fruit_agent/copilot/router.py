@@ -22,6 +22,8 @@ from fruit_agent.db import get_session, tenant_session
 from fruit_agent.identity.dependencies import require_permissions
 from fruit_agent.identity.schemas import TenantPrincipal
 from fruit_agent.knowledge.repository import KnowledgeRepository
+from fruit_agent.knowledge.dependencies import get_embedding_provider
+from fruit_agent.knowledge.embeddings import EmbeddingProvider
 from fruit_agent.model_gateway.router import get_provider_bindings
 from fruit_agent.model_gateway.service import ProviderBinding
 
@@ -31,11 +33,13 @@ router = APIRouter(prefix="/api/v1/copilot", tags=["copilot"])
 def _service(
     session: AsyncSession,
     providers: list[ProviderBinding],
+    embedding_provider: EmbeddingProvider | None = None,
 ) -> CopilotService:
     return CopilotService(
         repository=CopilotRepository(session),
         knowledge_repository=KnowledgeRepository(session),
         providers=providers,
+        embedding_provider=embedding_provider,
     )
 
 
@@ -55,9 +59,13 @@ async def create_case(
         list[ProviderBinding],
         Depends(get_provider_bindings),
     ],
+    embedding_provider: Annotated[
+        EmbeddingProvider | None,
+        Depends(get_embedding_provider),
+    ],
 ) -> CopilotCaseRead:
     async with tenant_session(session, principal.tenant_id):
-        service = _service(session, providers)
+        service = _service(session, providers, embedding_provider)
         case = await service.create_case(
             tenant_id=principal.tenant_id,
             user_id=principal.user_id,

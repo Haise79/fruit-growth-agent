@@ -4,8 +4,8 @@ from uuid import UUID, uuid4
 import structlog
 
 from fruit_agent.knowledge.embeddings import (
-    DeterministicEmbeddingProvider,
     EmbeddingProvider,
+    default_embedding_provider,
 )
 from fruit_agent.knowledge.models import MerchantKnowledge, ProductSKU, ReviewStatus
 from fruit_agent.knowledge.repository import KnowledgeRepository
@@ -30,7 +30,12 @@ class KnowledgeService:
         embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         self.repository = repository
-        self.embedding_provider = embedding_provider or DeterministicEmbeddingProvider()
+        provider = embedding_provider or default_embedding_provider()
+        if provider is None:
+            raise RuntimeError(
+                "embedding provider must be configured outside development/test"
+            )
+        self.embedding_provider: EmbeddingProvider = provider
 
     async def list_items(self, tenant_id: UUID) -> list[MerchantKnowledge]:
         return await self.repository.list_items(tenant_id)
@@ -51,6 +56,8 @@ class KnowledgeService:
             source_name=item.source_name,
             responsible_user_id=item.responsible_user_id,
             embedding=self.embedding_provider.embed(item.content),
+            embedding_model=self.embedding_provider.model_name,
+            embedding_version=self.embedding_provider.model_version,
             valid_until=item.valid_until,
         )
         self.repository.session.add(record)
@@ -76,6 +83,8 @@ class KnowledgeService:
         if content is not None and content != record.content:
             record.content = content
             record.embedding = self.embedding_provider.embed(content)
+            record.embedding_model = self.embedding_provider.model_name
+            record.embedding_version = self.embedding_provider.model_version
             has_effective_change = True
         knowledge_type = values.pop("knowledge_type", None)
         if knowledge_type is not None and knowledge_type.value != record.knowledge_type:

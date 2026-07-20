@@ -99,7 +99,7 @@ it("creates knowledge with the exact API wire names", async () => {
           content: "冷藏保存，食用前回温。",
           source_name: "客服知识库",
           responsible_user_id: OWNER_ID,
-          valid_until: "2030-01-01T00:00",
+          valid_until: new Date("2030-01-01T00:00").toISOString(),
         });
         return jsonResponse(created, 201);
       }
@@ -137,7 +137,7 @@ it("shows the returned draft reset after editing approved content", async () => 
     vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
       if (url.endsWith(`/items/${KNOWLEDGE_ID}`) && init.method === "PATCH") {
-        expect(JSON.parse(String(init.body))).toEqual({
+        expect(JSON.parse(String(init.body))).toMatchObject({
           content: "更新后的冷藏说明。",
         });
         return jsonResponse(edited);
@@ -162,6 +162,72 @@ it("shows the returned draft reset after editing approved content", async () => 
   ).toBeInTheDocument();
   expect(screen.getByText("草稿")).toBeInTheDocument();
   expect(screen.getByText("更新后的冷藏说明。")).toBeInTheDocument();
+});
+
+it("edits every lifecycle field and converts API timestamps for datetime-local", async () => {
+  const approved = knowledgeItem();
+  const updated = knowledgeItem({
+    review_status: "draft",
+    knowledge_type: "origin_story",
+    source_name: "Updated source",
+    responsible_user_id: "55555555-5555-4555-8555-555555555555",
+    valid_until: "2031-02-03T04:05:00Z",
+    content: "Updated lifecycle content.",
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (url.endsWith(`/items/${KNOWLEDGE_ID}`) && init.method === "PATCH") {
+        expect(JSON.parse(String(init.body))).toEqual({
+          knowledge_type: "origin_story",
+          source_name: "Updated source",
+          responsible_user_id: "55555555-5555-4555-8555-555555555555",
+          valid_until: new Date("2031-02-03T04:05").toISOString(),
+          content: "Updated lifecycle content.",
+        });
+        return jsonResponse(updated);
+      }
+      if (url.endsWith("/api/v1/knowledge/items")) {
+        return jsonResponse([approved]);
+      }
+      throw new Error(`Unexpected request: ${init.method ?? "GET"} ${url}`);
+    }),
+  );
+
+  render(<KnowledgeWorkspace />);
+  const row = await screen.findByRole("row", { name: /果园客服手册/ });
+  await userEvent.click(within(row).getByRole("button", { name: "编辑" }));
+
+  expect(within(row).getByRole("combobox")).toHaveValue("faq");
+  const textboxes = within(row).getAllByRole("textbox");
+  expect(textboxes.some((control) => control.getAttribute("value") === OWNER_ID)).toBe(
+    true,
+  );
+
+  await userEvent.selectOptions(within(row).getByRole("combobox"), "origin_story");
+  const source = within(row).getByDisplayValue("果园客服手册");
+  const owner = within(row).getByDisplayValue(OWNER_ID);
+  const validity = within(row).getByDisplayValue(
+    localDateTimeValue("2030-01-01T00:00:00Z"),
+  );
+  const content = within(row).getByRole("textbox", {
+    name: "编辑知识内容",
+  });
+  await userEvent.clear(source);
+  await userEvent.type(source, "Updated source");
+  await userEvent.clear(owner);
+  await userEvent.type(owner, "55555555-5555-4555-8555-555555555555");
+  await userEvent.clear(validity);
+  await userEvent.type(validity, "2031-02-03T04:05");
+  await userEvent.clear(content);
+  await userEvent.type(content, "Updated lifecycle content.");
+  await userEvent.click(within(row).getByRole("button", { name: "保存编辑" }));
+
+  expect(
+    await screen.findByText("Updated lifecycle content."),
+  ).toBeInTheDocument();
+  expect(screen.getByText("草稿")).toBeInTheDocument();
 });
 
 it("keeps a failed edit available for correction and retry", async () => {
@@ -252,3 +318,10 @@ it("announces load failures and retries the list request", async () => {
   );
   expect(attempt).toBe(2);
 });
+
+function localDateTimeValue(value: string): string {
+  const instant = new Date(value);
+  return new Date(instant.getTime() - instant.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+}

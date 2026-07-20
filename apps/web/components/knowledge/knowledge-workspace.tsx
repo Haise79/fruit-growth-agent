@@ -11,6 +11,7 @@ import {
 import type {
   KnowledgeItem,
   KnowledgeItemCreate,
+  KnowledgeItemUpdate,
   KnowledgeReviewStatus,
 } from "@/lib/types";
 
@@ -83,12 +84,12 @@ export function KnowledgeWorkspace() {
     }
   }
 
-  async function edit(knowledgeId: string, content: string) {
+  async function edit(knowledgeId: string, changes: KnowledgeItemUpdate) {
     setPendingId(knowledgeId);
     setActionError("");
     setNotice("");
     try {
-      const updated = await updateKnowledgeItem(knowledgeId, { content });
+      const updated = await updateKnowledgeItem(knowledgeId, changes);
       replaceItem(updated);
       setNotice(
         updated.review_status === "draft"

@@ -3,7 +3,15 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
-from sqlalchemy import CheckConstraint, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -59,6 +67,18 @@ class ProductSKU(TenantOwnedMixin, Base):
 
 class MerchantKnowledge(TenantOwnedMixin, Base):
     __tablename__ = "merchant_knowledge"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ("tenant_id", "responsible_user_id"),
+            ("users.tenant_id", "users.id"),
+            name="fk_merchant_knowledge_tenant_responsible",
+        ),
+        Index(
+            "ix_merchant_knowledge_tenant_responsible_user",
+            "tenant_id",
+            "responsible_user_id",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     knowledge_type: Mapped[str] = mapped_column(
@@ -85,4 +105,16 @@ class MerchantKnowledge(TenantOwnedMixin, Base):
     embedding: Mapped[list[float]] = mapped_column(
         Vector(EMBEDDING_DIMENSION),
         nullable=False,
+    )
+    embedding_model: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+        default="deterministic-sha256",
+        server_default="deterministic-sha256",
+    )
+    embedding_version: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        default="1",
+        server_default="1",
     )

@@ -45,7 +45,7 @@ export function KnowledgeForm({ isSaving, onSave }: KnowledgeFormProps) {
       content: content.trim(),
       source_name: sourceName.trim(),
       responsible_user_id: responsibleUserId.trim(),
-      valid_until: validUntil,
+      valid_until: new Date(validUntil).toISOString(),
     });
   }
 

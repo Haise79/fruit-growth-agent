@@ -18,6 +18,7 @@ from fruit_agent.identity.models import Membership, Role, Tenant, User
 from fruit_agent.identity.schemas import TenantPrincipal
 from fruit_agent.knowledge.embeddings import DeterministicEmbeddingProvider
 from fruit_agent.knowledge.models import (
+    EMBEDDING_DIMENSION,
     KnowledgeType,
     MerchantKnowledge,
     ProductSKU,
@@ -30,6 +31,15 @@ from fruit_agent.model_gateway.schemas import (
     ModelProfile,
 )
 from fruit_agent.model_gateway.service import ProviderBinding, ProviderUnavailableError
+
+
+class SemanticTestEmbeddingProvider:
+    model_name = "semantic-test"
+    model_version = "1"
+
+    def embed(self, text: str) -> list[float]:
+        del text
+        return [1.0, *([0.0] * (EMBEDDING_DIMENSION - 1))]
 
 
 @pytest.fixture
@@ -143,6 +153,34 @@ def _binding(provider: AsyncMock) -> ProviderBinding:
     )
 
 
+def _provider_response_with_facts(
+    *,
+    suggestion_text: str,
+    fact_claims: dict[str, object],
+) -> CopilotProviderResponse:
+    return CopilotProviderResponse(
+        output=CopilotAgentOutput(
+            stage="presale",
+            intent="recommendation",
+            risk_level="low",
+            suggestions=[
+                CopilotAgentSuggestion.model_validate(
+                    {
+                        "suggestion_text": suggestion_text,
+                        "referenced_knowledge_ids": [],
+                        "recommended_sku_code": "APPLE-001",
+                        "confidence_score": 0.93,
+                        "risk_tip": "Confirm current shipping availability.",
+                        "fact_claims": fact_claims,
+                    }
+                )
+            ],
+        ),
+        input_tokens=30,
+        output_tokens=20,
+    )
+
+
 async def _seed_sku(
     principal: TenantPrincipal,
     *,
@@ -160,6 +198,7 @@ async def _seed_sku(
                 source_id=uuid4(),
                 origin="山东烟台",
                 taste="脆甜",
+                net_weight_grams=2500,
                 valid_until=valid_until
                 or datetime.now(UTC) + timedelta(days=7),
             )
@@ -193,6 +232,87 @@ async def _seed_knowledge(
         )
         await seed.commit()
     return knowledge_id
+
+
+@pytest.mark.asyncio
+async def test_semantic_retrieval_finds_relevant_item_beyond_five_candidates(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a)
+    relevant_id = uuid4()
+    future = datetime.now(UTC) + timedelta(days=7)
+    irrelevant_vector = [0.0, 1.0, *([0.0] * (EMBEDDING_DIMENSION - 2))]
+    relevant_vector = [1.0, *([0.0] * (EMBEDDING_DIMENSION - 1))]
+    async with SessionFactory() as seed:
+        seed.add_all(
+            [
+                MerchantKnowledge(
+                    tenant_id=tenant_a.tenant_id,
+                    knowledge_type=KnowledgeType.faq.value,
+                    review_status=ReviewStatus.approved.value,
+                    content=f"Unrelated policy number {index}.",
+                    source_id=uuid4(),
+                    source_name=f"Source {index}",
+                    responsible_user_id=tenant_a.user_id,
+                    embedding=irrelevant_vector,
+                    embedding_model="semantic-test",
+                    embedding_version="1",
+                    valid_until=future,
+                )
+                for index in range(6)
+            ]
+        )
+        seed.add(
+            MerchantKnowledge(
+                id=relevant_id,
+                tenant_id=tenant_a.tenant_id,
+                knowledge_type=KnowledgeType.faq.value,
+                review_status=ReviewStatus.approved.value,
+                content="Apples should be stored in the refrigerator.",
+                source_id=uuid4(),
+                source_name="Storage guide",
+                responsible_user_id=tenant_a.user_id,
+                embedding=relevant_vector,
+                embedding_model="semantic-test",
+                embedding_version="1",
+                valid_until=future,
+            )
+        )
+        await seed.commit()
+
+    provider = AsyncMock()
+    provider.complete.return_value = _provider_response(
+        referenced_knowledge_ids=[relevant_id]
+    )
+    app.state.model_providers = [_binding(provider)]
+    app.state.embedding_provider = SemanticTestEmbeddingProvider()
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": "How should apples be stored?",
+                    "selected_sku_codes": ["APPLE-001"],
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+        app.state.embedding_provider = DeterministicEmbeddingProvider()
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "suggestions_ready"
+    prompt = provider.complete.await_args.args[0]
+    assert [item["id"] for item in prompt["knowledge_evidence"]] == [
+        str(relevant_id)
+    ]
+    await session.close()
 
 
 @pytest.mark.asyncio
@@ -296,6 +416,125 @@ async def test_deterministic_handoff_persists_redaction_and_skips_provider(
     assert response.json()["risk"] == "critical"
     assert response.json()["suggestions"] == []
     assert "13800138000" not in repr(response.json())
+    provider.complete.assert_not_awaited()
+    await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw_message",
+    [
+        "Ship to 123 Main Street, Springfield, IL 62704",
+        "WeChat ID: wxid_alice123",
+        "customer_name Alice Zhang",
+    ],
+)
+async def test_pii_bypasses_are_redacted_before_persistence_and_provider_invocation(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+    raw_message: str,
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a)
+    provider = AsyncMock()
+    provider.complete.return_value = _provider_response()
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": raw_message,
+                    "selected_sku_codes": ["APPLE-001"],
+                },
+            )
+            history = await client.get("/api/v1/copilot/cases")
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "suggestions_ready"
+    assert raw_message not in repr(response.json())
+    assert raw_message not in repr(history.json())
+    assert raw_message not in repr(provider.complete.await_args.args[0])
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_unisolatable_residual_pii_uses_placeholder_and_skips_provider(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a)
+    provider = AsyncMock()
+    provider.complete.return_value = _provider_response()
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+    raw_message = "Please contact wxid_alice123 about this apple."
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": raw_message,
+                    "selected_sku_codes": ["APPLE-001"],
+                },
+            )
+            history = await client.get("/api/v1/copilot/cases")
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "handoff_required"
+    assert response.json()["message"] == "[REDACTED: PII]"
+    assert "pii_detected" in response.json()["risk_reasons"]
+    assert raw_message not in repr(response.json())
+    assert raw_message not in repr(history.json())
+    provider.complete.assert_not_awaited()
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_severe_deterministic_risk_skips_low_risk_provider(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a)
+    provider = AsyncMock()
+    provider.complete.return_value = _provider_response(risk="low")
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": "The customer stopped breathing after consuming the apple.",
+                    "selected_sku_codes": ["APPLE-001"],
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["risk"] == "critical"
+    assert response.json()["status"] == "handoff_required"
+    assert response.json()["suggestions"] == []
     provider.complete.assert_not_awaited()
     await session.close()
 
@@ -535,6 +774,98 @@ async def test_recommended_sku_outside_fresh_context_hands_off(
     assert response.status_code == 201
     assert response.json()["status"] == "handoff_required"
     assert response.json()["suggestions"] == []
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_knowledge_only_suggestion_without_fresh_sku_hands_off(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = copilot_context
+    knowledge_id = await _seed_knowledge(
+        tenant_a,
+        content="Apples should be refrigerated to keep fresh.",
+    )
+    provider = AsyncMock()
+    provider.complete.return_value = _provider_response(
+        recommended_sku_code=None,
+        referenced_knowledge_ids=[knowledge_id],
+    )
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": "How should I store apples?",
+                    "selected_sku_codes": [],
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "handoff_required"
+    assert response.json()["suggestions"] == []
+    assert "invalid_model_evidence" in response.json()["risk_reasons"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("suggestion_text", "fact_claims"),
+    [
+        ("Price: CNY 39.90.", {}),
+        ("Origin: California.", {}),
+        ("Inventory: 7 units.", {}),
+        ("Net weight: 3 kg.", {}),
+        ("Recommended at the current price.", {"price": "39.90", "currency": "CNY"}),
+        ("Recommended from the listed orchard.", {"origin": "California"}),
+        ("Recommended while stock lasts.", {"inventory": 7}),
+        ("Recommended in this pack size.", {"net_weight_grams": 3000}),
+    ],
+)
+async def test_contradictory_sku_facts_discard_the_whole_generation(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+    suggestion_text: str,
+    fact_claims: dict[str, object],
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a)
+    provider = AsyncMock()
+    provider.complete.return_value = _provider_response_with_facts(
+        suggestion_text=suggestion_text,
+        fact_claims=fact_claims,
+    )
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": "Please recommend this apple.",
+                    "selected_sku_codes": ["APPLE-001"],
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "handoff_required"
+    assert response.json()["suggestions"] == []
+    assert "invalid_model_evidence" in response.json()["risk_reasons"]
     await session.close()
 
 

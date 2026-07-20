@@ -75,21 +75,30 @@ class KnowledgeRepository:
         knowledge_types: list[KnowledgeType],
         now: datetime,
         limit: int,
+        embedding_model: str | None = None,
+        embedding_version: str | None = None,
     ) -> list[MerchantKnowledge]:
         allowed_types = SEMANTIC_TYPES & set(knowledge_types)
         if not allowed_types:
             return []
+        conditions = [
+            MerchantKnowledge.tenant_id == tenant_id,
+            MerchantKnowledge.knowledge_type.in_(
+                knowledge_type.value for knowledge_type in allowed_types
+            ),
+            MerchantKnowledge.review_status == ReviewStatus.approved.value,
+            MerchantKnowledge.valid_until.is_not(None),
+            MerchantKnowledge.valid_until > now,
+        ]
+        if embedding_model is not None:
+            conditions.append(MerchantKnowledge.embedding_model == embedding_model)
+        if embedding_version is not None:
+            conditions.append(
+                MerchantKnowledge.embedding_version == embedding_version
+            )
         rows = await self.session.scalars(
             select(MerchantKnowledge)
-            .where(
-                MerchantKnowledge.tenant_id == tenant_id,
-                MerchantKnowledge.knowledge_type.in_(
-                    knowledge_type.value for knowledge_type in allowed_types
-                ),
-                MerchantKnowledge.review_status == ReviewStatus.approved.value,
-                MerchantKnowledge.valid_until.is_not(None),
-                MerchantKnowledge.valid_until > now,
-            )
+            .where(*conditions)
             .order_by(
                 MerchantKnowledge.embedding.cosine_distance(query_embedding)
             )

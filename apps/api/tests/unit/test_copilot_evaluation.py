@@ -33,6 +33,7 @@ def test_evaluation_metrics_calculate_expected_values() -> None:
     ]
     predictions: list[dict[str, Any]] = [
         {
+            "message": "[REDACTED] wants an apple",
             "stage": "presale",
             "intent": "recommendation",
             "risk_level": "high",
@@ -41,6 +42,7 @@ def test_evaluation_metrics_calculate_expected_values() -> None:
             "recommended_sku_code": "APPLE-001",
         },
         {
+            "message": "How do I store apples?",
             "stage": "aftersale",
             "intent": "storage",
             "risk_level": "low",
@@ -90,6 +92,7 @@ def test_citation_validity_counts_each_predicted_citation_and_handles_none() -> 
     ]
     predictions = [
         {
+            "message": "A",
             "stage": "presale",
             "intent": "recommendation",
             "risk_level": "low",
@@ -97,6 +100,7 @@ def test_citation_validity_counts_each_predicted_citation_and_handles_none() -> 
             "citation_ids": ["allowed-1", "foreign"],
         },
         {
+            "message": "B",
             "stage": "presale",
             "intent": "storage",
             "risk_level": "low",
@@ -140,12 +144,115 @@ def test_factual_error_rate_only_uses_labeled_sku_rows() -> None:
         },
     ]
     predictions: list[dict[str, Any]] = [
-        {"recommended_sku_code": "APPLE-001", "citation_ids": []},
-        {"recommended_sku_code": "WRONG-UNLABELED", "citation_ids": []},
-        {"citation_ids": []},
+        {
+            "message": "A",
+            "recommended_sku_code": "APPLE-001",
+            "citation_ids": [],
+        },
+        {
+            "message": "B",
+            "recommended_sku_code": "WRONG-UNLABELED",
+            "citation_ids": [],
+        },
+        {"message": "C", "citation_ids": []},
     ]
 
     assert evaluate_predictions(expected, predictions).factual_error_rate == 0.5
+
+
+def test_evaluation_rejects_reordered_or_mismatched_prediction_messages() -> None:
+    expected = [
+        {
+            "message": "first fixture",
+            "stage": "presale",
+            "intent": "recommendation",
+            "risk_level": "low",
+            "handoff_required": False,
+            "allowed_citation_ids": [],
+        },
+        {
+            "message": "second fixture",
+            "stage": "aftersale",
+            "intent": "complaint",
+            "risk_level": "high",
+            "handoff_required": True,
+            "allowed_citation_ids": [],
+        },
+    ]
+    predictions = [
+        {
+            "message": "second fixture",
+            "stage": "aftersale",
+            "intent": "complaint",
+            "risk_level": "high",
+            "handoff_required": True,
+            "citation_ids": [],
+        },
+        {
+            "message": "first fixture",
+            "stage": "presale",
+            "intent": "recommendation",
+            "risk_level": "low",
+            "handoff_required": False,
+            "citation_ids": [],
+        },
+    ]
+
+    with pytest.raises(EvaluationInputError, match="line 1.*message"):
+        evaluate_predictions(expected, predictions)
+
+
+def test_high_risk_without_handoff_is_counted_as_a_recall_miss() -> None:
+    expected = [
+        {
+            "message": "severe fixture",
+            "stage": "aftersale",
+            "intent": "health_safety",
+            "risk_level": "critical",
+            "handoff_required": True,
+            "allowed_citation_ids": [],
+        }
+    ]
+    predictions = [
+        {
+            "message": "severe fixture",
+            "stage": "aftersale",
+            "intent": "health_safety",
+            "risk_level": "critical",
+            "handoff_required": False,
+            "citation_ids": [],
+        }
+    ]
+
+    assert evaluate_predictions(expected, predictions).high_risk_recall == 0.0
+
+
+def test_explicitly_invalid_factual_claim_counts_as_an_error() -> None:
+    expected = [
+        {
+            "message": "recommendation fixture",
+            "stage": "presale",
+            "intent": "recommendation",
+            "risk_level": "low",
+            "handoff_required": False,
+            "allowed_citation_ids": [],
+            "expected_sku_code": "APPLE-001",
+        }
+    ]
+    predictions = [
+        {
+            "message": "recommendation fixture",
+            "stage": "presale",
+            "intent": "recommendation",
+            "risk_level": "low",
+            "handoff_required": False,
+            "citation_ids": [],
+            "recommended_sku_code": "APPLE-001",
+            "factual_claims_valid": False,
+        }
+    ]
+
+    assert evaluate_predictions(expected, predictions).factual_error_rate == 1.0
 
 
 @pytest.mark.parametrize(

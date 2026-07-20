@@ -69,6 +69,51 @@ def test_redact_replaces_sensitive_values_recursively() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Ship to 123 Main Street, Springfield, IL 62704",
+        "WeChat ID: wxid_alice123",
+        "customer_name Alice Zhang",
+        "QQ: 123456789",
+        "Alipay account: alice.pay",
+    ],
+)
+def test_free_text_redacts_multilingual_address_name_and_social_handles(
+    message: str,
+) -> None:
+    result = redact_text(message)
+
+    assert result != message
+    assert REDACTED in result
+    assert not any(
+        token in result
+        for token in (
+            "123 Main Street",
+            "wxid_alice123",
+            "Alice Zhang",
+            "123456789",
+            "alice.pay",
+        )
+    )
+
+
+def test_redact_normalizes_structured_sensitive_key_variants() -> None:
+    payload = {
+        "customerName": "Alice Zhang",
+        "WECHAT-ID": "wxid_alice123",
+        "payment_account": "alice.pay",
+        "receiver.phone": "13800138000",
+    }
+
+    assert redact(payload) == {
+        "customerName": REDACTED,
+        "WECHAT-ID": REDACTED,
+        "payment_account": REDACTED,
+        "receiver.phone": REDACTED,
+    }
+
+
 def test_redact_does_not_mutate_input() -> None:
     payload = {"shipping_address": "北京市朝阳区"}
 

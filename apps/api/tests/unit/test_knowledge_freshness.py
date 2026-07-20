@@ -79,3 +79,19 @@ async def test_conflicting_sku_narrative_facts_require_human_review() -> None:
 
     assert result.status == "conflict"
     assert result.requires_human is True
+
+
+@pytest.mark.asyncio
+async def test_sku_expiring_exactly_at_the_check_boundary_is_expired() -> None:
+    now = datetime.now(UTC)
+    boundary_sku = _sku(valid_until=now)
+    repository = AsyncMock()
+    repository.get_sku_exact.return_value = [boundary_sku]
+
+    result = await KnowledgeService(repository).get_recommendable_sku(
+        tenant_id=boundary_sku.tenant_id,
+        sku_code=boundary_sku.sku_code,
+        now=now,
+    )
+
+    assert result.status == "expired"

@@ -180,6 +180,29 @@ def test_english_mandatory_risk_language_requires_handoff(message: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "message",
+    [
+        "She is in anaphylactic shock after eating the apple.",
+        "He stopped breathing after consuming the fruit.",
+        "The customer is unconscious; call an ambulance.",
+        "My father died after consuming this product.",
+        "I have severe swelling after eating these apples.",
+        "吃完苹果后已经没有呼吸了，请叫救护车。",
+        "顾客食用后失去意识，出现严重肿胀。",
+    ],
+)
+def test_severe_post_consumption_health_language_requires_handoff(
+    message: str,
+) -> None:
+    result = classify_customer_message(message)
+
+    assert result.stage is CopilotStage.aftersale
+    assert result.intent is CopilotIntent.health_safety
+    assert result.risk is CopilotRisk.critical
+    assert result.requires_handoff is True
+
+
+@pytest.mark.parametrize(
     ("rule_risk", "model_risk", "expected"),
     [
         (CopilotRisk.low, CopilotRisk.medium, CopilotRisk.medium),

@@ -3,15 +3,22 @@ from __future__ import annotations
 from hashlib import sha256
 from typing import Protocol
 
+from fruit_agent.config import get_settings
 from fruit_agent.knowledge.models import EMBEDDING_DIMENSION
 
 
 class EmbeddingProvider(Protocol):
+    model_name: str
+    model_version: str
+
     def embed(self, text: str) -> list[float]: ...
 
 
 class DeterministicEmbeddingProvider:
     """Development embedding provider with repeatable, fixed-size vectors."""
+
+    model_name = "deterministic-sha256"
+    model_version = "1"
 
     def embed(self, text: str) -> list[float]:
         values: list[float] = []
@@ -26,3 +33,9 @@ class DeterministicEmbeddingProvider:
                     break
             counter += 1
         return values
+
+
+def default_embedding_provider() -> EmbeddingProvider | None:
+    if get_settings().environment.casefold() in {"development", "test"}:
+        return DeterministicEmbeddingProvider()
+    return None

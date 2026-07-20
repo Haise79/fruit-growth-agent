@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
@@ -36,12 +37,24 @@ class SuggestionRequest(BaseModel):
     knowledge_ids: list[UUID] = Field(default_factory=list)
 
 
+class CopilotSKUFactClaims(BaseModel):
+    price: Decimal | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, min_length=1, max_length=16)
+    inventory: int | None = Field(default=None, ge=0)
+    origin: str | None = Field(default=None, min_length=1, max_length=300)
+    net_weight_grams: int | None = Field(default=None, ge=0)
+    shipping_eta: str | None = Field(default=None, min_length=1, max_length=200)
+
+
 class CopilotAgentSuggestion(BaseModel):
     suggestion_text: str = Field(min_length=1, max_length=4000)
     referenced_knowledge_ids: list[UUID] = Field(default_factory=list)
     recommended_sku_code: str | None = Field(default=None, min_length=1, max_length=128)
     confidence_score: float = Field(ge=0, le=1)
     risk_tip: str | None = Field(default=None, max_length=1000)
+    fact_claims: CopilotSKUFactClaims = Field(
+        default_factory=CopilotSKUFactClaims
+    )
 
 
 class CopilotAgentOutput(BaseModel):

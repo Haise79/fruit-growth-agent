@@ -3,7 +3,14 @@ from enum import StrEnum
 from typing import Any, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 class CopilotStage(StrEnum):
@@ -97,7 +104,7 @@ class CopilotSuggestionEdit(BaseModel):
 class CopilotOutcomeEventCreate(BaseModel):
     event_type: CopilotOutcomeEventType
     suggestion_id: UUID | None = None
-    occurred_at: datetime | None = None
+    occurred_at: AwareDatetime | None = None
     metadata: dict[str, Any] | None = None
 
     @model_validator(mode="after")

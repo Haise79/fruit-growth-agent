@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 
 from fruit_agent.common.errors import DomainError
-from fruit_agent.common.redaction import redact
-from fruit_agent.common.redaction import redact_text
+from fruit_agent.common.redaction import (
+    PII_PLACEHOLDER,
+    contains_supported_pii,
+    redact,
+    redact_text,
+)
 from fruit_agent.copilot.models import (
     CopilotCase,
     CopilotCitationSnapshot,
@@ -31,7 +36,10 @@ from fruit_agent.copilot.schemas import (
     CopilotRisk,
     CopilotStage,
 )
-from fruit_agent.knowledge.embeddings import DeterministicEmbeddingProvider
+from fruit_agent.knowledge.embeddings import (
+    EmbeddingProvider,
+    default_embedding_provider,
+)
 from fruit_agent.knowledge.models import KnowledgeType, MerchantKnowledge
 from fruit_agent.knowledge.repository import KnowledgeRepository
 from fruit_agent.knowledge.schemas import ProductSKURead
@@ -156,6 +164,24 @@ _PRODUCT_AUXILIARY_STORED = re.compile(
     re.IGNORECASE,
 )
 _PRODUCT_SCOPED_TOPICS = {"recommendation", "storage"}
+_PRICE_CLAIM = re.compile(
+    r"(?i)(?:price|cost|售价|价格)\s*(?:is|:|：|为)?\s*"
+    r"(?P<currency>CNY|RMB|USD|[$¥￥])?\s*"
+    r"(?P<value>\d+(?:\.\d{1,2})?)"
+)
+_INVENTORY_CLAIM = re.compile(
+    r"(?i)(?:inventory|stock|库存)\s*(?:is|:|：|为|有)?\s*"
+    r"(?P<value>\d+)"
+)
+_ORIGIN_CLAIM = re.compile(
+    r"(?i)(?:origin|产地)\s*(?:is|:|：|为|来自)?\s*"
+    r"(?P<value>[A-Za-z\u4e00-\u9fff][^,.;，。；\n]{0,80})"
+)
+_WEIGHT_CLAIM = re.compile(
+    r"(?i)(?:net\s*weight|weight|净重|重量)\s*(?:is|:|：|为)?\s*"
+    r"(?P<value>\d+(?:\.\d+)?)\s*"
+    r"(?P<unit>kg|kilograms?|g|grams?|公斤|千克|克)\b"
+)
 
 
 def _matching_topics(text: str) -> set[str]:
@@ -194,10 +220,14 @@ class CopilotService:
         repository: CopilotRepository,
         knowledge_repository: KnowledgeRepository,
         providers: list[ProviderBinding],
+        embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         self.repository = repository
         self.knowledge_repository = knowledge_repository
         self.providers = providers
+        self.embedding_provider = (
+            embedding_provider or default_embedding_provider()
+        )
 
     async def create_case(
         self,
@@ -210,10 +240,18 @@ class CopilotService:
         checked_at = now or datetime.now(UTC)
         raw_classification = classify_customer_message(request.message)
         redacted_message = redact_text(request.message)
+        residual_pii = contains_supported_pii(redacted_message)
+        if residual_pii:
+            redacted_message = PII_PLACEHOLDER
         classification = merge_safety_classifications(
             raw_classification,
             classify_customer_message(redacted_message),
         )
+        risk = classification.risk
+        risk_reasons = list(classification.reasons)
+        if residual_pii:
+            risk = merge_model_risk(risk, CopilotRisk.medium)
+            risk_reasons.append("pii_detected")
         case = CopilotCase(
             tenant_id=tenant_id,
             created_by_user_id=user_id,
@@ -221,13 +259,13 @@ class CopilotService:
             selected_sku_codes=request.selected_sku_codes,
             stage=classification.stage.value,
             intent=classification.intent.value,
-            risk=classification.risk.value,
+            risk=risk.value,
             status=CopilotCaseStatus.handoff_required.value,
-            risk_reasons=list(classification.reasons),
+            risk_reasons=risk_reasons,
         )
         await self.repository.add_case(case)
 
-        if classification.requires_handoff:
+        if classification.requires_handoff or residual_pii:
             return case
 
         skus, knowledge, evidence_failure = await self._load_evidence(
@@ -340,7 +378,12 @@ class CopilotService:
         now: datetime,
     ) -> tuple[list[ProductSKURead], list[MerchantKnowledge], str | None]:
         skus: list[ProductSKURead] = []
-        knowledge_service = KnowledgeService(self.knowledge_repository)
+        if self.embedding_provider is None:
+            return [], [], "embedding_provider_unavailable"
+        knowledge_service = KnowledgeService(
+            self.knowledge_repository,
+            self.embedding_provider,
+        )
         for sku_code in selected_sku_codes:
             result = await knowledge_service.get_recommendable_sku(
                 tenant_id=tenant_id,
@@ -358,7 +401,7 @@ class CopilotService:
 
         knowledge = await self.knowledge_repository.search_semantic(
             tenant_id=tenant_id,
-            query_embedding=DeterministicEmbeddingProvider().embed(message),
+            query_embedding=self.embedding_provider.embed(message),
             knowledge_types=[
                 KnowledgeType.faq,
                 KnowledgeType.talking_point,
@@ -366,6 +409,8 @@ class CopilotService:
             ],
             now=now,
             limit=5,
+            embedding_model=self.embedding_provider.model_name,
+            embedding_version=self.embedding_provider.model_version,
         )
         knowledge = [
             item
@@ -429,18 +474,102 @@ class CopilotService:
         knowledge: list[MerchantKnowledge],
     ) -> bool:
         allowed_skus = {sku.sku_code for sku in skus}
+        skus_by_code = {sku.sku_code: sku for sku in skus}
         allowed_knowledge = {item.id for item in knowledge}
         for suggestion in suggestions:
-            if (
-                suggestion.recommended_sku_code is not None
-                and suggestion.recommended_sku_code not in allowed_skus
-            ):
+            if suggestion.recommended_sku_code is None:
+                return False
+            if suggestion.recommended_sku_code not in allowed_skus:
                 return False
             if not set(suggestion.referenced_knowledge_ids) <= allowed_knowledge:
                 return False
-            has_sku_citation = suggestion.recommended_sku_code is not None
-            has_knowledge_citation = bool(suggestion.referenced_knowledge_ids)
-            if not has_sku_citation and not has_knowledge_citation:
+            if not CopilotService._valid_sku_facts(
+                suggestion,
+                skus_by_code[suggestion.recommended_sku_code],
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _valid_sku_facts(
+        suggestion: CopilotAgentSuggestion,
+        sku: ProductSKURead,
+    ) -> bool:
+        claims = suggestion.fact_claims
+        if claims.price is not None and claims.price != sku.price:
+            return False
+        if (
+            claims.currency is not None
+            and claims.currency.casefold() not in {"cny", "rmb", "¥", "￥"}
+        ):
+            return False
+        if claims.inventory is not None and claims.inventory != sku.inventory:
+            return False
+        if (
+            claims.origin is not None
+            and CopilotService._normalized_fact(claims.origin)
+            != CopilotService._normalized_fact(sku.origin)
+        ):
+            return False
+        if (
+            claims.net_weight_grams is not None
+            and claims.net_weight_grams != sku.net_weight_grams
+        ):
+            return False
+        if (
+            claims.shipping_eta is not None
+            and CopilotService._normalized_fact(claims.shipping_eta)
+            != CopilotService._normalized_fact(sku.shipping_eta)
+        ):
+            return False
+        return CopilotService._valid_prose_facts(
+            suggestion.suggestion_text,
+            sku,
+        )
+
+    @staticmethod
+    def _normalized_fact(value: str | None) -> str | None:
+        if value is None:
+            return None
+        return re.sub(r"\s+", " ", value).strip().casefold()
+
+    @staticmethod
+    def _valid_prose_facts(text: str, sku: ProductSKURead) -> bool:
+        price = _PRICE_CLAIM.search(text)
+        if price is not None:
+            currency = price.group("currency")
+            if currency is not None and currency.casefold() not in {
+                "cny",
+                "rmb",
+                "¥",
+                "￥",
+            }:
+                return False
+            if Decimal(price.group("value")) != sku.price:
+                return False
+
+        inventory = _INVENTORY_CLAIM.search(text)
+        if inventory is not None and int(inventory.group("value")) != sku.inventory:
+            return False
+
+        origin = _ORIGIN_CLAIM.search(text)
+        if origin is not None and CopilotService._normalized_fact(
+            origin.group("value")
+        ) != CopilotService._normalized_fact(sku.origin):
+            return False
+
+        weight = _WEIGHT_CLAIM.search(text)
+        if weight is not None:
+            grams = Decimal(weight.group("value"))
+            if weight.group("unit").casefold() in {
+                "kg",
+                "kilogram",
+                "kilograms",
+                "公斤",
+                "千克",
+            }:
+                grams *= 1000
+            if grams != sku.net_weight_grams:
                 return False
         return True
 

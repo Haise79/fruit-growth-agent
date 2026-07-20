@@ -7,9 +7,62 @@ SENSITIVE_KEYS = {
     "address",
     "shipping_address",
     "receiver_phone",
+    "customer_name",
+    "recipient_name",
+    "receiver_name",
+    "consignee_name",
+    "wechat",
+    "wechat_id",
+    "weixin",
+    "weixin_id",
+    "qq",
+    "qq_id",
+    "alipay",
+    "alipay_account",
+    "payment_account",
+    "social_handle",
+}
+_NORMALIZED_SENSITIVE_KEYS = {
+    re.sub(r"[^a-z0-9]", "", key.casefold())
+    for key in SENSITIVE_KEYS
 }
 REDACTED = "[REDACTED]"
+PII_PLACEHOLDER = "[REDACTED: PII]"
 _TEXT_PATTERNS = (
+    re.compile(
+        r"(?i)\b(?:ship(?:ping)?\s+to|deliver(?:y)?\s+to|mail\s+to|"
+        r"address)\s*[:#=-]?\s*"
+        r"\d{1,6}\s+[A-Za-z0-9.' -]{1,60}"
+        r"(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|"
+        r"drive|dr|court|ct|way)\b[^\n;.!?]{0,80}"
+    ),
+    re.compile(
+        r"(?i)\b\d{1,6}\s+[A-Za-z0-9.' -]{1,60}"
+        r"(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|"
+        r"drive|dr|court|ct|way)\b"
+        r"(?:\s*,\s*[A-Za-z.' -]{2,40})?"
+        r"(?:\s*,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?)?"
+    ),
+    re.compile(
+        r"(?i)(?:wechat|weixin|微信)"
+        r"(?:[\s_-]*(?:id|号|账号|帳號))?\s*[:：=_-]?\s*"
+        r"(?:wxid_)?[A-Za-z0-9_-]{5,64}"
+    ),
+    re.compile(r"(?i)(?:\bqq\b|QQ号|扣扣号)\s*[:：=_-]?\s*[1-9]\d{4,11}"),
+    re.compile(
+        r"(?i)(?:alipay(?:[\s_-]*(?:account|id|handle))?|"
+        r"支付宝(?:账号|账户)?|payment[\s_-]*(?:account|handle)|"
+        r"social[\s_-]*(?:account|handle))"
+        r"\s*[:：=_-]?\s*[A-Za-z0-9][A-Za-z0-9_.@+-]{2,63}"
+    ),
+    re.compile(
+        r"(?i)(?P<label>customer[\s_-]*name|recipient[\s_-]*name|"
+        r"receiver[\s_-]*name|consignee[\s_-]*name|"
+        r"客户姓名|顾客姓名|收件人姓名)"
+        r"\s*[:：=_-]?\s*"
+        r"(?:[A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*){1,3}|"
+        r"[\u4e00-\u9fff·]{2,20})"
+    ),
     re.compile(
         r"(?P<prefix>寄到|送到|邮寄到|配送到|"
         r"收货地(?:址)?(?:是|为)?)\s*"
@@ -31,6 +84,23 @@ _TEXT_PATTERNS = (
     re.compile(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)"),
     re.compile(r"(?<!\d)0\d{2,3}[- ]?\d{7,8}(?!\d)"),
 )
+
+_RESIDUAL_PII_PATTERNS = (
+    *_TEXT_PATTERNS,
+    re.compile(r"(?i)(?<![A-Za-z0-9_])wxid_[A-Za-z0-9_-]{5,64}(?![A-Za-z0-9_])"),
+)
+
+
+def contains_supported_pii(value: str) -> bool:
+    sanitized = value.replace(PII_PLACEHOLDER, "").replace(REDACTED, "")
+    return any(
+        pattern.search(sanitized) is not None
+        for pattern in _RESIDUAL_PII_PATTERNS
+    )
+
+
+def _normalize_sensitive_key(key: object) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(key).casefold())
 
 
 def redact_text(value: str) -> str:
@@ -58,7 +128,7 @@ def redact(value: object) -> object:
         return {
             str(key): (
                 REDACTED
-                if str(key).lower() in SENSITIVE_KEYS
+                if _normalize_sensitive_key(key) in _NORMALIZED_SENSITIVE_KEYS
                 else redact(item)
             )
             for key, item in value.items()
