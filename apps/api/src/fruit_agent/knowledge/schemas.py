@@ -27,6 +27,7 @@ class ProductSKURead(BaseModel):
     net_weight_grams: int | None = None
     sales_regions: list[str] | None = None
     shipping_eta: str | None = None
+    valid_until: datetime | None = None
 
 
 class KnowledgeItemCreate(BaseModel):

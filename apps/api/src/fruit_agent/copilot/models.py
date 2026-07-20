@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Float,
+    ForeignKey,
     ForeignKeyConstraint,
     Integer,
     String,
@@ -67,7 +68,6 @@ class CopilotSuggestion(TenantOwnedMixin, Base):
         ForeignKeyConstraint(
             ("tenant_id", "case_id"),
             ("copilot_cases.tenant_id", "copilot_cases.id"),
-            ondelete="CASCADE",
             name="fk_copilot_suggestions_tenant_case",
         ),
         UniqueConstraint(
@@ -124,11 +124,15 @@ class CopilotCitationSnapshot(TenantOwnedMixin, Base):
         ForeignKeyConstraint(
             ("tenant_id", "suggestion_id"),
             ("copilot_suggestions.tenant_id", "copilot_suggestions.id"),
-            ondelete="CASCADE",
             name="fk_copilot_citations_tenant_suggestion",
         ),
     )
 
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True,
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     suggestion_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     citation_type: Mapped[str] = mapped_column(String(32), nullable=False)

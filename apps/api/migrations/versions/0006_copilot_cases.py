@@ -147,7 +147,6 @@ def upgrade() -> None:
             ["tenant_id", "case_id"],
             ["copilot_cases.tenant_id", "copilot_cases.id"],
             name="fk_copilot_suggestions_tenant_case",
-            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
@@ -191,13 +190,11 @@ def upgrade() -> None:
             ["tenant_id"],
             ["tenants.id"],
             name="fk_copilot_citations_tenant",
-            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["tenant_id", "suggestion_id"],
             ["copilot_suggestions.tenant_id", "copilot_suggestions.id"],
             name="fk_copilot_citations_tenant_suggestion",
-            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),
     )

@@ -8,6 +8,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fruit_agent.app import app
@@ -213,7 +214,13 @@ async def test_fresh_exact_evidence_creates_redacted_suggestion_with_snapshot(
             response = await client.post(
                 "/api/v1/copilot/cases",
                 json={
-                    "message": "电话 13800138000，想买红富士，请推荐",
+                    "message": (
+                        "寄到上海市浦东新区世纪大道100号，"
+                        "座机021-58881234，银行卡6222021234567890123，"
+                        "护照E12345678，手机13800138000，"
+                        "邮箱buyer@example.com，身份证310101199001011234，"
+                        "想买红富士，请推荐"
+                    ),
                     "selected_sku_codes": ["APPLE-001"],
                 },
             )
@@ -223,7 +230,16 @@ async def test_fresh_exact_evidence_creates_redacted_suggestion_with_snapshot(
 
     assert response.status_code == 201
     body = response.json()
-    assert body["message"] == "电话 [REDACTED]，想买红富士，请推荐"
+    for sensitive in (
+        "上海市浦东新区世纪大道100号",
+        "021-58881234",
+        "6222021234567890123",
+        "E12345678",
+        "13800138000",
+        "buyer@example.com",
+        "310101199001011234",
+    ):
+        assert sensitive not in body["message"]
     assert body["risk"] == "medium"
     assert body["status"] == "suggestions_ready"
     assert len(body["suggestions"]) == 1
@@ -236,7 +252,16 @@ async def test_fresh_exact_evidence_creates_redacted_suggestion_with_snapshot(
     assert suggestion["citations"][0]["citation_type"] == "sku"
     assert suggestion["citations"][0]["snapshot"]["sku_code"] == "APPLE-001"
     sent_prompt = provider.complete.await_args.args[0]
-    assert "13800138000" not in repr(sent_prompt)
+    for sensitive in (
+        "上海市浦东新区世纪大道100号",
+        "021-58881234",
+        "6222021234567890123",
+        "E12345678",
+        "13800138000",
+        "buyer@example.com",
+        "310101199001011234",
+    ):
+        assert sensitive not in repr(sent_prompt)
     await session.close()
 
 
@@ -509,7 +534,7 @@ async def test_unrelated_narrative_is_not_accepted_as_customer_evidence(
     tenant_a, _, session = copilot_context
     unrelated_id = await _seed_knowledge(
         tenant_a,
-        content="本店员工排班规则每周一更新。",
+        content="苹果客服团队每周一更新排班和值班负责人。",
     )
     provider = AsyncMock()
     provider.complete.return_value = _provider_response(
@@ -596,4 +621,38 @@ async def test_history_detail_and_edit_hide_cross_tenant_case_and_redact_edit(
     assert other_history.json() == []
     assert other_detail.status_code == 404
     assert other_edit.status_code == 404
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_immutable_citation_parent_foreign_keys_are_non_cascading(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    _, _, session = copilot_context
+
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT conname, confdeltype
+                FROM pg_constraint
+                WHERE conname IN (
+                    'fk_copilot_suggestions_tenant_case',
+                    'fk_copilot_citations_tenant',
+                    'fk_copilot_citations_tenant_suggestion'
+                )
+                """
+            )
+        )
+    ).all()
+    delete_actions = {
+        str(row.conname): str(row.confdeltype)
+        for row in rows
+    }
+
+    assert delete_actions == {
+        "fk_copilot_suggestions_tenant_case": "a",
+        "fk_copilot_citations_tenant": "a",
+        "fk_copilot_citations_tenant_suggestion": "a",
+    }
     await session.close()

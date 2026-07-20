@@ -78,6 +78,51 @@ def test_knowledge_conflict_requires_handoff() -> None:
     assert result.requires_handoff is True
 
 
+def test_asthma_question_requires_handoff() -> None:
+    result = classify_customer_message("我有哮喘，可以吃吗？")
+
+    assert result.intent is CopilotIntent.health_safety
+    assert result.risk is CopilotRisk.critical
+    assert result.requires_handoff is True
+
+
+def test_adverse_digestive_symptoms_require_handoff() -> None:
+    result = classify_customer_message("吃完后一直腹泻呕吐")
+
+    assert result.stage is CopilotStage.aftersale
+    assert result.intent is CopilotIntent.health_safety
+    assert result.risk is CopilotRisk.critical
+    assert result.requires_handoff is True
+
+
+def test_industry_regulator_complaint_requires_handoff() -> None:
+    result = classify_customer_message("我要去工商局投诉")
+
+    assert result.intent is CopilotIntent.complaint
+    assert result.risk is CopilotRisk.critical
+    assert result.requires_handoff is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "我有心脏病和慢性肾病，能吃这种水果吗",
+        "免疫系统疾病患者能不能吃",
+        "吃了以后持续恶心肚子痛",
+        "收到后吃了发烧头晕",
+        "我要打12345消费者热线投诉",
+        "我会向消费者协会举报",
+    ],
+)
+def test_common_health_symptom_and_consumer_regulator_variants_fail_closed(
+    message: str,
+) -> None:
+    result = classify_customer_message(message)
+
+    assert result.risk in {CopilotRisk.high, CopilotRisk.critical}
+    assert result.requires_handoff is True
+
+
 @pytest.mark.parametrize(
     "message",
     [

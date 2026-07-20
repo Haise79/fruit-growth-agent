@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-import re
 from uuid import UUID
 
 from fruit_agent.common.redaction import redact_text
@@ -21,8 +20,9 @@ from fruit_agent.copilot.schemas import (
     CopilotStage,
 )
 from fruit_agent.knowledge.embeddings import DeterministicEmbeddingProvider
-from fruit_agent.knowledge.models import KnowledgeType, MerchantKnowledge, ProductSKU
+from fruit_agent.knowledge.models import KnowledgeType, MerchantKnowledge
 from fruit_agent.knowledge.repository import KnowledgeRepository
+from fruit_agent.knowledge.schemas import ProductSKURead
 from fruit_agent.knowledge.service import KnowledgeService
 from fruit_agent.model_gateway.schemas import CopilotAgentSuggestion
 from fruit_agent.model_gateway.service import (
@@ -33,43 +33,106 @@ from fruit_agent.model_gateway.service import (
     ProviderUnavailableError,
 )
 
-_IRRELEVANT_TERMS = {
-    "一下",
-    "什么",
-    "你们",
-    "可以",
-    "应该",
-    "怎么",
-    "这个",
-    "我们",
-    "about",
-    "could",
-    "please",
-    "should",
-    "that",
-    "this",
-    "what",
-    "with",
-    "would",
+_TOPIC_ANCHORS: dict[str, tuple[str, ...]] = {
+    "storage": (
+        "保存",
+        "储存",
+        "冷藏",
+        "保鲜",
+        "冰箱",
+        "常温",
+        "storage",
+        "store",
+        "refrigerat",
+        "keep fresh",
+    ),
+    "delivery": (
+        "发货",
+        "物流",
+        "配送",
+        "快递",
+        "到货",
+        "shipping",
+        "delivery",
+        "courier",
+    ),
+    "gift": ("送礼", "礼物", "礼盒", "gift"),
+    "recommendation": (
+        "推荐",
+        "选择",
+        "哪款",
+        "口感",
+        "甜",
+        "脆",
+        "酸",
+        "recommend",
+        "choose",
+        "taste",
+        "sweet",
+        "crisp",
+    ),
+    "product_fact": (
+        "产地",
+        "品种",
+        "规格",
+        "重量",
+        "价格",
+        "库存",
+        "果园",
+        "来自",
+        "origin",
+        "variety",
+        "specification",
+        "weight",
+        "price",
+        "inventory",
+        "orchard",
+    ),
+    "damage": (
+        "破损",
+        "压坏",
+        "磕碰",
+        "腐烂",
+        "damage",
+        "crush",
+        "rotten",
+    ),
+    "refund": (
+        "退款",
+        "退货",
+        "赔偿",
+        "售后",
+        "refund",
+        "return",
+        "compensation",
+    ),
+    "health_safety": (
+        "过敏",
+        "疾病",
+        "食品安全",
+        "食用",
+        "能吃",
+        "可以吃",
+        "allergy",
+        "disease",
+        "food safety",
+        "safe to eat",
+    ),
 }
 
 
-def _relevance_terms(text: str) -> set[str]:
-    terms = {
-        word
-        for word in re.findall(r"[a-z0-9]+", text.casefold())
-        if len(word) >= 3 and word not in _IRRELEVANT_TERMS
+def _matching_topics(text: str) -> set[str]:
+    normalized = text.casefold()
+    return {
+        topic
+        for topic, anchors in _TOPIC_ANCHORS.items()
+        if any(anchor in normalized for anchor in anchors)
     }
-    for sequence in re.findall(r"[\u3400-\u9fff]+", text):
-        terms.update(
-            sequence[index : index + 2]
-            for index in range(len(sequence) - 1)
-        )
-    return terms - _IRRELEVANT_TERMS
 
 
 def is_relevant_narrative(message: str, content: str) -> bool:
-    return bool(_relevance_terms(message) & _relevance_terms(content))
+    message_topics = _matching_topics(message)
+    return bool(message_topics and message_topics & _matching_topics(content))
 
 
 class CopilotService:
@@ -219,8 +282,8 @@ class CopilotService:
         selected_sku_codes: list[str],
         message: str,
         now: datetime,
-    ) -> tuple[list[ProductSKU], list[MerchantKnowledge], str | None]:
-        skus: list[ProductSKU] = []
+    ) -> tuple[list[ProductSKURead], list[MerchantKnowledge], str | None]:
+        skus: list[ProductSKURead] = []
         knowledge_service = KnowledgeService(self.knowledge_repository)
         for sku_code in selected_sku_codes:
             result = await knowledge_service.get_recommendable_sku(
@@ -235,11 +298,7 @@ class CopilotService:
                     else f"sku_evidence_{result.status}"
                 )
                 return [], [], reason
-            rows = await self.knowledge_repository.get_sku_exact(
-                tenant_id,
-                sku_code,
-            )
-            skus.append(rows[0])
+            skus.append(result.sku)
 
         knowledge = await self.knowledge_repository.search_semantic(
             tenant_id=tenant_id,
@@ -266,7 +325,7 @@ class CopilotService:
         *,
         message: str,
         classification: dict[str, object],
-        skus: list[ProductSKU],
+        skus: list[ProductSKURead],
         knowledge: list[MerchantKnowledge],
     ) -> dict[str, object]:
         return {
@@ -310,7 +369,7 @@ class CopilotService:
     def _valid_output_context(
         suggestions: list[CopilotAgentSuggestion],
         *,
-        skus: list[ProductSKU],
+        skus: list[ProductSKURead],
         knowledge: list[MerchantKnowledge],
     ) -> bool:
         allowed_skus = {sku.sku_code for sku in skus}
@@ -335,7 +394,7 @@ class CopilotService:
         tenant_id: UUID,
         suggestion_id: UUID,
         draft: CopilotAgentSuggestion,
-        skus: list[ProductSKU],
+        skus: list[ProductSKURead],
         knowledge: list[MerchantKnowledge],
     ) -> list[CopilotCitationSnapshot]:
         citations: list[CopilotCitationSnapshot] = []

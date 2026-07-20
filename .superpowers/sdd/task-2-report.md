@@ -136,3 +136,87 @@ Implementation commit:
 No unresolved implementation concerns. The relevance gate is intentionally
 conservative: uncertain narrative matches hand off rather than generating an
 unsupported draft.
+
+## Independent review round 2 fixes
+
+### Additional changed files
+
+- `apps/api/src/fruit_agent/knowledge/schemas.py`
+- `apps/api/tests/unit/test_copilot_evidence.py`
+- `apps/api/tests/unit/test_redaction.py`
+
+The existing migration, copilot safety/service/models, copilot integration
+tests, and Task 2 report were also updated.
+
+### RED evidence
+
+1. Expanded deterministic handoff vocabulary:
+   - Exact reviewer examples: `我有哮喘，可以吃吗？`,
+     `吃完后一直腹泻呕吐`, and `我要去工商局投诉`.
+   - Additional disease, adverse-symptom, consumer-association, and hotline
+     variants were included.
+   - Focused result: `8 failed, 1 passed, 18 deselected`.
+2. Conservative narrative relevance:
+   - A storage question and an apple-named employee scheduling document were
+     incorrectly considered relevant, while a storage document using
+     `冰箱` instead of the exact `冷藏` phrase was missed.
+   - Focused result: `3 failed`.
+3. Expanded free-text PII:
+   - Synthetic unlabeled Shanghai address, landline, 19-digit card/account
+     number, and passport ID remained in both the persisted case and provider
+     prompt.
+   - Focused result: `2 failed`.
+4. SKU TOCTOU/requery:
+   - After correcting the test fixture to include the database-generated SKU
+     ID, the regression failed because evidence contained an ORM `ProductSKU`
+     from a second query instead of the already validated `ProductSKURead`
+     snapshot.
+   - Focused result: `1 failed`.
+5. Immutable citation FK semantics:
+   - PostgreSQL reported `confdeltype = 'c'` (`CASCADE`) for the case-to-
+     suggestion and both citation parent foreign keys.
+   - Focused result: `1 failed`.
+
+### GREEN evidence
+
+- Expanded safety rules: `27 passed`.
+- Topic-anchor evidence relevance, including realistic apple/scheduling
+  regression: `3 passed`.
+- Extended PII unit plus persisted-case/provider boundaries: `2 passed`.
+- Validated SKU snapshot reuse plus fresh exact-evidence API: `2 passed`.
+- Restrictive/no-action parent FK catalog check: `1 passed`.
+- Consolidated affected suites:
+  `python -m pytest -q tests/unit/test_copilot_safety.py
+  tests/unit/test_copilot_evidence.py tests/unit/test_redaction.py
+  tests/security/test_prompt_redaction.py
+  tests/unit/test_copilot_model_gateway.py
+  tests/integration/test_copilot_api.py` — `51 passed in 5.56s`.
+
+### Round 2 full verification
+
+- `python -m pytest -q` — `108 passed in 12.96s`.
+- `python -m ruff check .` — `All checks passed!`.
+- `python -m mypy src tests` —
+  `Success: no issues found in 79 source files`.
+- `python -m alembic upgrade head` — upgraded through `0006`.
+- `python -m alembic downgrade base` — downgraded cleanly through `0001`.
+- `git diff --check` — no whitespace errors.
+
+### Round 2 self-review
+
+- Mandatory deterministic handoff now conservatively covers common Chinese
+  disease, adverse reaction, regulator, consumer-association, and hotline
+  variants; all still skip provider invocation.
+- Narrative eligibility requires shared intent/topic anchors. A product-name
+  overlap alone cannot make unrelated narrative evidence eligible.
+- Free-text redaction covers unlabeled Chinese delivery addresses, landlines,
+  16–19 digit account/card numbers, and passport identifiers while retaining
+  mobile, email, and national-ID behavior.
+- Exact SKU evidence and citation content now use the same validated
+  `ExactFactResult.sku` snapshot; no post-validation `rows[0]` requery remains.
+- Immutable citation parent relationships use PostgreSQL `NO ACTION`.
+  Citation updates/deletes remain rejected by the immutable trigger, while
+  parent deletion is blocked instead of cascading into that trigger.
+
+No unresolved round 2 concerns. Topic matching and PII detection remain
+intentionally conservative and hand off/redact when uncertain.
