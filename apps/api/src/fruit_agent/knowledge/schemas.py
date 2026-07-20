@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fruit_agent.knowledge.models import KnowledgeType, ReviewStatus
 
@@ -43,6 +43,17 @@ class KnowledgeItemUpdate(BaseModel):
     source_name: str | None = Field(default=None, min_length=1, max_length=300)
     responsible_user_id: UUID | None = None
     valid_until: datetime | None = None
+
+    @model_validator(mode="after")
+    def reject_explicit_nulls_for_required_fields(self) -> "KnowledgeItemUpdate":
+        for field_name in (
+            "source_name",
+            "responsible_user_id",
+            "valid_until",
+        ):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} may not be null")
+        return self
 
 
 class KnowledgeReviewRequest(BaseModel):

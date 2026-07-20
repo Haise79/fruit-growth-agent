@@ -7,7 +7,7 @@ from fruit_agent.knowledge.embeddings import (
     DeterministicEmbeddingProvider,
     EmbeddingProvider,
 )
-from fruit_agent.knowledge.models import MerchantKnowledge, ReviewStatus
+from fruit_agent.knowledge.models import MerchantKnowledge, ProductSKU, ReviewStatus
 from fruit_agent.knowledge.repository import KnowledgeRepository
 from fruit_agent.knowledge.schemas import (
     ExactFactResult,
@@ -17,6 +17,10 @@ from fruit_agent.knowledge.schemas import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+class InvalidResponsibleUserError(ValueError):
+    pass
 
 
 class KnowledgeService:
@@ -37,6 +41,7 @@ class KnowledgeService:
         tenant_id: UUID,
         item: KnowledgeItemCreate,
     ) -> MerchantKnowledge:
+        await self._require_active_member(tenant_id, item.responsible_user_id)
         record = MerchantKnowledge(
             tenant_id=tenant_id,
             knowledge_type=item.knowledge_type.value,
@@ -63,6 +68,9 @@ class KnowledgeService:
         if record is None:
             return None
         values = changes.model_dump(exclude_unset=True)
+        responsible_user_id = values.get("responsible_user_id")
+        if responsible_user_id is not None:
+            await self._require_active_member(tenant_id, responsible_user_id)
         content = values.pop("content", None)
         if content is not None:
             record.content = content
@@ -76,6 +84,12 @@ class KnowledgeService:
         await self.repository.session.flush()
         await self.repository.session.refresh(record)
         return record
+
+    async def _require_active_member(self, tenant_id: UUID, user_id: UUID) -> None:
+        if not await self.repository.has_active_member(tenant_id, user_id):
+            raise InvalidResponsibleUserError(
+                "responsible user must be an active member of this tenant"
+            )
 
     async def review_item(
         self,
@@ -115,10 +129,7 @@ class KnowledgeService:
             )
             return ExactFactResult(status="expired")
 
-        distinct_facts = {
-            (row.price, row.inventory, row.name)
-            for row in rows
-        }
+        distinct_facts = {self._sku_facts(row) for row in rows}
         if len(distinct_facts) > 1:
             source_ids = [row.source_id for row in rows]
             await logger.awarning(
@@ -136,4 +147,21 @@ class KnowledgeService:
         return ExactFactResult(
             status="ok",
             sku=ProductSKURead.model_validate(rows[0]),
+        )
+
+    @staticmethod
+    def _sku_facts(row: ProductSKU) -> tuple[object, ...]:
+        return (
+            row.name,
+            row.price,
+            row.inventory,
+            row.variety,
+            row.origin,
+            row.orchard,
+            row.taste,
+            row.ripeness,
+            row.specification,
+            row.net_weight_grams,
+            tuple(row.sales_regions) if row.sales_regions is not None else None,
+            row.shipping_eta,
         )

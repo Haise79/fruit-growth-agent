@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fruit_agent.app import app
 from fruit_agent.db import SessionFactory, engine, get_session
 from fruit_agent.identity.dependencies import get_principal
-from fruit_agent.identity.models import Role, Tenant, User
+from fruit_agent.identity.models import Membership, Role, Tenant, User
 from fruit_agent.identity.schemas import TenantPrincipal
 
 
@@ -58,6 +58,30 @@ async def knowledge_management_context(
                     id=implementer_id,
                     tenant_id=tenant_b_id,
                     email="implementer@example.com",
+                    valid_until=valid_until,
+                ),
+            ]
+        )
+        await seed_session.commit()
+
+        seed_session.add_all(
+            [
+                Membership(
+                    tenant_id=tenant_a_id,
+                    user_id=operator_id,
+                    role=Role.operator.value,
+                    valid_until=valid_until,
+                ),
+                Membership(
+                    tenant_id=tenant_a_id,
+                    user_id=owner_id,
+                    role=Role.owner.value,
+                    valid_until=valid_until,
+                ),
+                Membership(
+                    tenant_id=tenant_b_id,
+                    user_id=implementer_id,
+                    role=Role.implementer.value,
                     valid_until=valid_until,
                 ),
             ]
@@ -176,4 +200,113 @@ async def test_knowledge_cross_tenant_item_is_hidden(
         app.dependency_overrides.clear()
 
     assert hidden.status_code == 404
+    await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"source_name": None},
+        {"responsible_user_id": None},
+        {"valid_until": None},
+    ],
+)
+async def test_knowledge_update_rejects_explicit_null_for_required_fields(
+    knowledge_management_context: tuple[
+        TenantPrincipal, TenantPrincipal, TenantPrincipal, AsyncSession
+    ],
+    changes: dict[str, None],
+) -> None:
+    operator, _, _, session = knowledge_management_context
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: operator
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                "/api/v1/knowledge/items",
+                json=_knowledge_payload(operator.user_id),
+            )
+            assert created.status_code == 201
+            response = await client.patch(
+                f"/api/v1/knowledge/items/{created.json()['id']}",
+                json=changes,
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_knowledge_responsible_user_must_be_active_member_of_tenant(
+    knowledge_management_context: tuple[
+        TenantPrincipal, TenantPrincipal, TenantPrincipal, AsyncSession
+    ],
+) -> None:
+    operator, _, tenant_b_implementer, session = knowledge_management_context
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: operator
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            payload = _knowledge_payload(tenant_b_implementer.user_id)
+            rejected_create = await client.post("/api/v1/knowledge/items", json=payload)
+            assert rejected_create.status_code == 422
+
+            created = await client.post(
+                "/api/v1/knowledge/items",
+                json=_knowledge_payload(operator.user_id),
+            )
+            assert created.status_code == 201
+            rejected_update = await client.patch(
+                f"/api/v1/knowledge/items/{created.json()['id']}",
+                json={"responsible_user_id": str(tenant_b_implementer.user_id)},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert rejected_update.status_code == 422
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_knowledge_list_is_empty_and_review_is_hidden(
+    knowledge_management_context: tuple[
+        TenantPrincipal, TenantPrincipal, TenantPrincipal, AsyncSession
+    ],
+) -> None:
+    operator, _, tenant_b_implementer, session = knowledge_management_context
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: operator
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                "/api/v1/knowledge/items",
+                json=_knowledge_payload(operator.user_id),
+            )
+            assert created.status_code == 201
+            knowledge_id = created.json()["id"]
+
+            app.dependency_overrides[get_principal] = lambda: tenant_b_implementer
+            listed = await client.get("/api/v1/knowledge/items")
+            hidden_review = await client.post(
+                f"/api/v1/knowledge/items/{knowledge_id}/review",
+                json={"review_status": "approved"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert listed.status_code == 200
+    assert listed.json() == []
+    assert hidden_review.status_code == 404
     await session.close()

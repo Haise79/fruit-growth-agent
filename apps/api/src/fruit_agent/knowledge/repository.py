@@ -10,6 +10,7 @@ from fruit_agent.knowledge.models import (
     ProductSKU,
     ReviewStatus,
 )
+from fruit_agent.identity.models import Membership, MembershipStatus
 
 SEMANTIC_TYPES = {
     KnowledgeType.faq,
@@ -55,6 +56,16 @@ class KnowledgeRepository:
             )
         )
         return rows.one_or_none()
+
+    async def has_active_member(self, tenant_id: UUID, user_id: UUID) -> bool:
+        membership = await self.session.scalar(
+            select(Membership.id).where(
+                Membership.tenant_id == tenant_id,
+                Membership.user_id == user_id,
+                Membership.status == MembershipStatus.active.value,
+            )
+        )
+        return membership is not None
 
     async def search_semantic(
         self,

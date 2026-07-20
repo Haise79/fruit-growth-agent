@@ -59,3 +59,23 @@ async def test_conflicting_facts_require_human_review() -> None:
     assert result.sku is None
     assert result.requires_human is True
     assert set(result.conflict_source_ids) == {first.source_id, second.source_id}
+
+
+@pytest.mark.asyncio
+async def test_conflicting_sku_narrative_facts_require_human_review() -> None:
+    now = datetime.now(UTC)
+    first = _sku(valid_until=now + timedelta(hours=1))
+    second = _sku(valid_until=now + timedelta(hours=1))
+    second.tenant_id = first.tenant_id
+    second.variety = "Fuji"
+    repository = AsyncMock()
+    repository.get_sku_exact.return_value = [first, second]
+
+    result = await KnowledgeService(repository).get_recommendable_sku(
+        tenant_id=first.tenant_id,
+        sku_code=first.sku_code,
+        now=now,
+    )
+
+    assert result.status == "conflict"
+    assert result.requires_human is True

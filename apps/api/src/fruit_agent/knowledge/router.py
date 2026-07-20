@@ -16,7 +16,10 @@ from fruit_agent.knowledge.schemas import (
     KnowledgeItemUpdate,
     KnowledgeReviewRequest,
 )
-from fruit_agent.knowledge.service import KnowledgeService
+from fruit_agent.knowledge.service import (
+    InvalidResponsibleUserError,
+    KnowledgeService,
+)
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
 
@@ -49,11 +52,17 @@ async def create_knowledge_item(
     ],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> KnowledgeItemRead:
-    async with tenant_session(session, principal.tenant_id):
-        record = await KnowledgeService(KnowledgeRepository(session)).create_item(
-            tenant_id=principal.tenant_id,
-            item=item,
-        )
+    try:
+        async with tenant_session(session, principal.tenant_id):
+            record = await KnowledgeService(KnowledgeRepository(session)).create_item(
+                tenant_id=principal.tenant_id,
+                item=item,
+            )
+    except InvalidResponsibleUserError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
     return KnowledgeItemRead.model_validate(record)
 
 
@@ -67,12 +76,18 @@ async def update_knowledge_item(
     ],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> KnowledgeItemRead:
-    async with tenant_session(session, principal.tenant_id):
-        record = await KnowledgeService(KnowledgeRepository(session)).update_item(
-            tenant_id=principal.tenant_id,
-            knowledge_id=knowledge_id,
-            changes=changes,
-        )
+    try:
+        async with tenant_session(session, principal.tenant_id):
+            record = await KnowledgeService(KnowledgeRepository(session)).update_item(
+                tenant_id=principal.tenant_id,
+                knowledge_id=knowledge_id,
+                changes=changes,
+            )
+    except InvalidResponsibleUserError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="knowledge not found")
     return KnowledgeItemRead.model_validate(record)
