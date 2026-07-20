@@ -1,8 +1,10 @@
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import DateTime, Table
 
 from fruit_agent.copilot.models import CopilotCase, CopilotCitationSnapshot
 from fruit_agent.copilot.schemas import (
@@ -81,10 +83,14 @@ def test_aware_plus_eight_timestamps_preserve_the_same_instant() -> None:
 
 
 def test_0009_orm_metadata_declares_timezone_and_nonnegative_timing() -> None:
-    assert CopilotCitationSnapshot.__table__.c.source_updated_at.type.timezone is True
-    assert CopilotCitationSnapshot.__table__.c.retrieved_at.type.timezone is True
+    citation_table = cast(Table, CopilotCitationSnapshot.__table__)
+    source_updated_at_type = cast(DateTime, citation_table.c.source_updated_at.type)
+    retrieved_at_type = cast(DateTime, citation_table.c.retrieved_at.type)
+    assert source_updated_at_type.timezone is True
+    assert retrieved_at_type.timezone is True
+    case_table = cast(Table, CopilotCase.__table__)
     constraint_names = {
-        constraint.name for constraint in CopilotCase.__table__.constraints
+        constraint.name for constraint in case_table.constraints
     }
     assert "ck_copilot_cases_response_time_ms" in constraint_names
 
