@@ -11,7 +11,11 @@ from fruit_agent.copilot.models import (
     CopilotSuggestion,
 )
 from fruit_agent.copilot.repository import CopilotRepository
-from fruit_agent.copilot.safety import classify_customer_message, merge_model_risk
+from fruit_agent.copilot.safety import (
+    classify_customer_message,
+    merge_model_risk,
+    merge_safety_classifications,
+)
 from fruit_agent.copilot.schemas import (
     CopilotCaseCreate,
     CopilotCaseStatus,
@@ -131,12 +135,17 @@ _PRODUCT_CONTEXT = re.compile(
     r"berries|produce)\b",
     re.IGNORECASE,
 )
-_STORE_NEAR_PRODUCT = re.compile(
-    r"(?:\b(?:store|stored|storing)\b.{0,40}"
+_IMPERATIVE_STORE_PRODUCT = re.compile(
+    r"\bstore\s+(?:(?:the|your|fresh|ripe)\s+){0,3}"
+    r"(?:apples?|fruits?|pears?|oranges?|peaches?|grapes?|"
+    r"berries|produce)\b",
+    re.IGNORECASE,
+)
+_PRODUCT_AUXILIARY_STORED = re.compile(
     r"\b(?:apples?|fruits?|pears?|oranges?|peaches?|grapes?|"
-    r"berries|produce)\b|"
-    r"\b(?:apples?|fruits?|pears?|oranges?|peaches?|grapes?|"
-    r"berries|produce)\b.{0,40}\b(?:store|stored|storing)\b)",
+    r"berries|produce)\b\s+"
+    r"(?:(?:should|must|can|may|need|needs|to|is|are|be|best)\s+){1,4}"
+    r"stored\b",
     re.IGNORECASE,
 )
 _PRODUCT_SCOPED_TOPICS = {"recommendation", "storage"}
@@ -149,7 +158,10 @@ def _matching_topics(text: str) -> set[str]:
         for topic, anchors in _TOPIC_ANCHORS.items()
         if any(anchor in normalized for anchor in anchors)
     }
-    if _STORE_NEAR_PRODUCT.search(text):
+    if (
+        _IMPERATIVE_STORE_PRODUCT.search(text)
+        or _PRODUCT_AUXILIARY_STORED.search(text)
+    ):
         topics.add("storage")
     return topics
 
@@ -189,8 +201,12 @@ class CopilotService:
         now: datetime | None = None,
     ) -> CopilotCase:
         checked_at = now or datetime.now(UTC)
+        raw_classification = classify_customer_message(request.message)
         redacted_message = redact_text(request.message)
-        classification = classify_customer_message(redacted_message)
+        classification = merge_safety_classifications(
+            raw_classification,
+            classify_customer_message(redacted_message),
+        )
         case = CopilotCase(
             tenant_id=tenant_id,
             created_by_user_id=user_id,

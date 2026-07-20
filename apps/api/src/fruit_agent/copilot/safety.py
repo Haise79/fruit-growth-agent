@@ -1,3 +1,5 @@
+import re
+
 from fruit_agent.copilot.schemas import (
     CopilotIntent,
     CopilotRisk,
@@ -207,7 +209,6 @@ def classify_customer_message(
             "市场监管",
             "监管局",
             "消协",
-            "12315",
             "卫生监督",
             "食药监",
             "工商局",
@@ -215,12 +216,11 @@ def classify_customer_message(
             "消费者权益",
             "消费者热线",
             "消费投诉热线",
-            "12345",
             "market regulator",
             "consumer protection agency",
             "food regulator",
         ),
-    ):
+    ) or re.search(r"(?<!\d)(?:12315|12345)(?!\d)", message):
         return SafetyClassification(
             stage=stage,
             intent=CopilotIntent.complaint,
@@ -399,3 +399,26 @@ def merge_model_risk(
     if _RISK_ORDER[model_risk] > _RISK_ORDER[rule_risk]:
         return model_risk
     return rule_risk
+
+
+def merge_safety_classifications(
+    raw: SafetyClassification,
+    redacted: SafetyClassification,
+) -> SafetyClassification:
+    raw_score = _RISK_ORDER[raw.risk]
+    redacted_score = _RISK_ORDER[redacted.risk]
+    if raw_score > redacted_score:
+        selected = raw
+    elif redacted_score > raw_score:
+        selected = redacted
+    elif raw.requires_handoff and not redacted.requires_handoff:
+        selected = raw
+    else:
+        selected = redacted
+    return SafetyClassification(
+        stage=selected.stage,
+        intent=selected.intent,
+        risk=selected.risk,
+        requires_handoff=raw.requires_handoff or redacted.requires_handoff,
+        reasons=list(dict.fromkeys([*raw.reasons, *redacted.reasons])),
+    )

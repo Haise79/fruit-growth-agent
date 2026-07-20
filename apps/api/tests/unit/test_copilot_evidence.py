@@ -43,6 +43,26 @@ def test_english_store_verb_rejects_retail_store_staff_document() -> None:
     )
 
 
+def test_apple_store_staff_phrase_is_not_storage_evidence() -> None:
+    assert (
+        is_relevant_narrative(
+            "How should I store apples?",
+            "Our apple store staff schedule is updated weekly.",
+        )
+        is False
+    )
+
+
+def test_product_auxiliary_stored_phrase_is_storage_evidence() -> None:
+    assert (
+        is_relevant_narrative(
+            "How should I store apples?",
+            "Apples should be stored in the refrigerator.",
+        )
+        is True
+    )
+
+
 def test_english_storage_domain_phrases_remain_relevant() -> None:
     assert (
         is_relevant_narrative(

@@ -44,7 +44,7 @@ def test_address_redaction_preserves_following_food_safety_handoff_clause() -> N
     redacted = redact_text("送到家。苹果发霉了")
     classification = classify_customer_message(redacted)
 
-    assert redacted == f"送到{REDACTED}。苹果发霉了"
+    assert redacted == "送到家。苹果发霉了"
     assert classification.risk is CopilotRisk.critical
     assert classification.requires_handoff is True
 

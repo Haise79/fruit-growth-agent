@@ -290,3 +290,67 @@ uncertain safety/evidence is handed off rather than drafted.
 
 Round 3 review-fix implementation commit:
 `f47a50ba18a5ea3913f6834f509ad7dc4050e331`.
+
+## Independent review round 4 fixes
+
+### RED evidence
+
+1. Structural address detection and safety merge:
+   - Added the exact `快递送到后苹果发霉了` regression with fresh SKU evidence.
+     The old redactor produced `快递送到[REDACTED]`, invoked the provider, and
+     returned a draft instead of a mandatory handoff.
+   - Added a raw/redacted boundary case using `地址：苹果发霉了`. The redacted
+     persisted message hid the safety phrase, and because only redacted text
+     was classified, the provider was invoked.
+   - Focused result: `2 failed`.
+2. Grammar-specific English storage relevance:
+   - Added exact query/evidence collision:
+     `How should I store apples?` versus
+     `Our apple store staff schedule is updated weekly.`
+   - Added positive guidance `Apples should be stored in the refrigerator.`
+   - Focused result: `1 failed, 1 passed, 7 deselected`; the generic
+     product-near-`store` regex accepted the staff schedule.
+
+### GREEN evidence
+
+- Structural-address/raw-redacted boundary plus redaction unit suite:
+  `11 passed`.
+- Grammar-specific relevance unit plus realistic integration regression:
+  `10 passed`.
+- During consolidated verification, the PII-rich presale fixture exposed a
+  cross-feature false positive: `12345` inside a 19-digit card number matched
+  the consumer hotline rule (`1 failed, 69 passed`). Hotline matching was
+  constrained to standalone digit boundaries; safety plus the affected API
+  fixture then passed `35 passed`.
+- Final consolidated affected suites:
+  `python -m pytest -q tests/unit/test_copilot_safety.py
+  tests/unit/test_copilot_evidence.py tests/unit/test_redaction.py
+  tests/security/test_prompt_redaction.py
+  tests/integration/test_copilot_api.py` — `70 passed in 6.21s`.
+
+### Round 4 full verification
+
+- `python -m pytest -q` — `129 passed in 13.20s`.
+- `python -m ruff check .` — `All checks passed!`.
+- `python -m mypy src tests` —
+  `Success: no issues found in 79 source files`.
+- `python -m alembic upgrade head` — upgraded through `0006`.
+- `python -m alembic downgrade base` — downgraded cleanly to base.
+- `git diff --check` — no whitespace errors.
+
+### Round 4 self-review
+
+- Unlabeled `寄到`/`送到` delivery prefixes redact only text with structural
+  Chinese address markers such as province/city/district/street/number/unit.
+  Delivery-status prose is not treated as an address.
+- Deterministic safety runs locally on raw and redacted text, merging only
+  derived classification fields at the higher severity. Only redacted customer
+  text is persisted or placed in a provider prompt.
+- English storage matching now accepts explicit storage/refrigeration/
+  shelf-life/keep-fresh language, imperative `store` plus a fruit term, or a
+  fruit term plus auxiliary verbs and `stored`. It rejects retail
+  `apple store staff` wording.
+- Consumer hotline numbers use numeric boundaries, preventing account/card
+  substrings from creating false regulator handoffs.
+
+No unresolved round 4 concerns.

@@ -301,6 +301,83 @@ async def test_deterministic_handoff_persists_redaction_and_skips_provider(
 
 
 @pytest.mark.asyncio
+async def test_delivery_status_phrase_is_not_redacted_as_an_address_and_hands_off(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a)
+    provider = AsyncMock()
+    provider.complete.return_value = _provider_response()
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": "快递送到后苹果发霉了",
+                    "selected_sku_codes": ["APPLE-001"],
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["message"] == "快递送到后苹果发霉了"
+    assert response.json()["risk"] == "critical"
+    assert response.json()["status"] == "handoff_required"
+    assert "food_safety" in response.json()["risk_reasons"]
+    provider.complete.assert_not_awaited()
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_raw_and_redacted_safety_merge_without_persisting_or_sending_raw_text(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a)
+    provider = AsyncMock()
+    provider.complete.return_value = _provider_response()
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+    raw_message = "地址：苹果发霉了"
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": raw_message,
+                    "selected_sku_codes": ["APPLE-001"],
+                },
+            )
+            history = await client.get("/api/v1/copilot/cases")
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["message"] == "地址：[REDACTED]"
+    assert raw_message not in repr(response.json())
+    assert history.json()[0]["message"] == "地址：[REDACTED]"
+    assert raw_message not in repr(history.json())
+    assert response.json()["risk"] == "critical"
+    assert response.json()["status"] == "handoff_required"
+    assert "food_safety" in response.json()["risk_reasons"]
+    provider.complete.assert_not_awaited()
+    await session.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("evidence_state", ["missing", "expired", "conflict"])
 async def test_missing_expired_or_conflicting_sku_evidence_hands_off(
     copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
