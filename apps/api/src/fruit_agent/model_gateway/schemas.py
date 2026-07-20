@@ -43,7 +43,7 @@ class CopilotSKUFactClaims(BaseModel):
     inventory: int = Field(ge=0)
     origin: str | None = Field(max_length=300)
     net_weight_grams: int | None = Field(ge=0)
-    shipping_eta: str | None = Field(default=None, min_length=1, max_length=200)
+    shipping_eta: str | None = Field(min_length=1, max_length=200)
 
 
 class CopilotAgentSuggestion(BaseModel):

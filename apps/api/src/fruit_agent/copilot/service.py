@@ -327,7 +327,15 @@ class CopilotService:
             if output.degraded
             else CopilotCaseStatus.suggestions_ready.value
         )
-        for rank, draft in enumerate(output.suggestions[:3], start=1):
+        unique_drafts: list[CopilotAgentSuggestion] = []
+        seen_sku_codes: set[str] = set()
+        for draft in output.suggestions:
+            sku_code = cast(str, draft.recommended_sku_code)
+            if sku_code in seen_sku_codes:
+                continue
+            seen_sku_codes.add(sku_code)
+            unique_drafts.append(draft)
+        for rank, draft in enumerate(unique_drafts[:3], start=1):
             verified_sku = next(
                 sku
                 for sku in skus
@@ -336,11 +344,17 @@ class CopilotService:
             suggestion = CopilotSuggestion(
                 tenant_id=tenant_id,
                 case_id=case.id,
-                original_text=self._render_verified_sku_facts(verified_sku),
+                original_text=self._render_verified_suggestion(
+                    sku=verified_sku,
+                    stage=CopilotStage(case.stage),
+                    intent=CopilotIntent(case.intent),
+                    draft=draft,
+                    knowledge=knowledge,
+                ),
                 rank=rank,
                 recommended_sku_code=draft.recommended_sku_code,
                 confidence=draft.confidence_score,
-                risk_tip=draft.risk_tip,
+                risk_tip=self._deterministic_risk_tip(case),
                 degraded=output.degraded,
                 model_name=output.model_name,
             )
@@ -527,8 +541,7 @@ class CopilotService:
         ):
             return False
         if (
-            claims.shipping_eta is not None
-            and CopilotService._normalized_fact(claims.shipping_eta)
+            CopilotService._normalized_fact(claims.shipping_eta)
             != CopilotService._normalized_fact(sku.shipping_eta)
         ):
             return False
@@ -541,18 +554,91 @@ class CopilotService:
         return re.sub(r"\s+", " ", value).strip().casefold()
 
     @staticmethod
-    def _render_verified_sku_facts(sku: ProductSKURead) -> str:
+    def _deterministic_risk_tip(case: CopilotCase) -> str:
+        if case.status == CopilotCaseStatus.handoff_required.value:
+            if "knowledge_conflict" in case.risk_reasons:
+                return "知识存在冲突，请转人工核验。"
+            return "当前请求需要人工处理。"
+        if case.risk == CopilotRisk.medium.value:
+            return "此建议存在需确认事项，请人工复核后使用。"
+        by_intent = {
+            CopilotIntent.delivery.value: "请根据系统配送范围和时效向顾客确认。",
+            CopilotIntent.storage.value: "请按系统储存信息和已审核知识向顾客说明。",
+            CopilotIntent.gift.value: "请根据系统规格和产地信息确认礼赠需求。",
+        }
+        return by_intent.get(
+            case.intent,
+            "请根据系统商品事实向顾客说明。",
+        )
+
+    @staticmethod
+    def _render_verified_suggestion(
+        *,
+        sku: ProductSKURead,
+        stage: CopilotStage,
+        intent: CopilotIntent,
+        draft: CopilotAgentSuggestion,
+        knowledge: list[MerchantKnowledge],
+    ) -> str:
         origin = sku.origin or "未提供"
         net_weight = (
             f"{sku.net_weight_grams} 克"
             if sku.net_weight_grams is not None
             else "未提供"
         )
-        return (
-            f"推荐 {sku.name}（SKU {sku.sku_code}）。"
-            f"价格 CNY {sku.price:.2f}；库存 {sku.inventory}；"
-            f"产地 {origin}；净重 {net_weight}。"
-        )
+        stage_label = {
+            CopilotStage.presale: "售前",
+            CopilotStage.aftersale: "售后",
+            CopilotStage.unknown: "服务",
+        }[stage]
+        if intent is CopilotIntent.delivery:
+            regions = "、".join(sku.sales_regions or []) or "未提供"
+            shipping_eta = sku.shipping_eta or "未提供"
+            rendered = (
+                f"{stage_label}配送｜{sku.name}（SKU {sku.sku_code}）。"
+                f"配送范围：{regions}；预计时效：{shipping_eta}。"
+            )
+        elif intent is CopilotIntent.storage:
+            rendered = (
+                f"{stage_label}储存参考｜{sku.name}（SKU {sku.sku_code}）。"
+                f"成熟度 {sku.ripeness or '未提供'}；"
+                f"规格 {sku.specification or '未提供'}。"
+            )
+        elif intent is CopilotIntent.gift:
+            rendered = (
+                f"{stage_label}礼赠信息｜{sku.name}（SKU {sku.sku_code}）。"
+                f"规格 {sku.specification or '未提供'}；净重 {net_weight}；"
+                f"产地 {origin}；口感 {sku.taste or '未提供'}。"
+            )
+        elif intent is CopilotIntent.product_info:
+            rendered = (
+                f"{stage_label}商品信息｜{sku.name}（SKU {sku.sku_code}）。"
+                f"品种 {sku.variety or '未提供'}；"
+                f"果园 {sku.orchard or '未提供'}；"
+                f"价格 CNY {sku.price:.2f}；库存 {sku.inventory}；"
+                f"产地 {origin}；净重 {net_weight}。"
+            )
+        else:
+            rendered = (
+                f"{stage_label}推荐理由｜{sku.name}（SKU {sku.sku_code}）。"
+                f"品种 {sku.variety or '未提供'}；"
+                f"口感 {sku.taste or '未提供'}；"
+                f"规格 {sku.specification or '未提供'}；"
+                f"价格 CNY {sku.price:.2f}；库存 {sku.inventory}；"
+                f"产地 {origin}；净重 {net_weight}。"
+            )
+
+        knowledge_by_id = {item.id: item for item in knowledge}
+        excerpts = [
+            re.sub(r"\s+", " ", knowledge_by_id[knowledge_id].content).strip()[
+                :500
+            ]
+            for knowledge_id in dict.fromkeys(draft.referenced_knowledge_ids)
+            if knowledge_id in knowledge_by_id
+        ]
+        if excerpts:
+            rendered = f"{rendered} 已审核知识：" + "；".join(excerpts) + "。"
+        return rendered
 
     @staticmethod
     def _citation_snapshots(

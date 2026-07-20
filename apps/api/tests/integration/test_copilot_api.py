@@ -34,6 +34,12 @@ from fruit_agent.model_gateway.schemas import (
 )
 from fruit_agent.model_gateway.service import ProviderBinding, ProviderUnavailableError
 
+EXPECTED_RECOMMENDATION_TEXT = (
+    "售前推荐理由｜红富士苹果（SKU APPLE-001）。"
+    "品种 红富士；口感 脆甜；规格 12 枚礼盒；"
+    "价格 CNY 29.90；库存 100；产地 山东烟台；净重 2500 克。"
+)
+
 
 class SemanticTestEmbeddingProvider:
     model_name = "semantic-test"
@@ -150,6 +156,7 @@ def _provider_response(
                         inventory=100,
                         origin="山东烟台",
                         net_weight_grams=2500,
+                        shipping_eta=None,
                     ),
                 )
             ],
@@ -175,6 +182,10 @@ def _provider_response_with_facts(
     *,
     suggestion_text: str,
     fact_claims: dict[str, object],
+    risk_tip: str = "Confirm current shipping availability.",
+    stage: str = "presale",
+    intent: str = "recommendation",
+    referenced_knowledge_ids: list[UUID] | None = None,
 ) -> CopilotProviderResponse:
     complete_fact_claims = {
         "price": "29.90",
@@ -182,21 +193,24 @@ def _provider_response_with_facts(
         "inventory": 100,
         "origin": "山东烟台",
         "net_weight_grams": 2500,
+        "shipping_eta": None,
         **fact_claims,
     }
     return CopilotProviderResponse(
         output=CopilotAgentOutput(
-            stage="presale",
-            intent="recommendation",
+            stage=stage,  # type: ignore[arg-type]
+            intent=intent,  # type: ignore[arg-type]
             risk_level="low",
             suggestions=[
                 CopilotAgentSuggestion.model_validate(
                     {
                         "suggestion_text": suggestion_text,
-                        "referenced_knowledge_ids": [],
+                        "referenced_knowledge_ids": (
+                            referenced_knowledge_ids or []
+                        ),
                         "recommended_sku_code": "APPLE-001",
                         "confidence_score": 0.93,
-                        "risk_tip": "Confirm current shipping availability.",
+                        "risk_tip": risk_tip,
                         "fact_claims": complete_fact_claims,
                     }
                 )
@@ -210,15 +224,18 @@ def _provider_response_with_facts(
 async def _seed_sku(
     principal: TenantPrincipal,
     *,
+    sku_code: str = "APPLE-001",
+    name: str = "红富士苹果",
     price: str = "29.90",
+    shipping_eta: str | None = None,
     valid_until: datetime | None = None,
 ) -> None:
     async with SessionFactory() as seed:
         seed.add(
             ProductSKU(
                 tenant_id=principal.tenant_id,
-                sku_code="APPLE-001",
-                name="红富士苹果",
+                sku_code=sku_code,
+                name=name,
                 price=Decimal(price),
                 inventory=100,
                 source_id=uuid4(),
@@ -230,6 +247,7 @@ async def _seed_sku(
                 specification="12 枚礼盒",
                 net_weight_grams=2500,
                 sales_regions=["华东", "华南"],
+                shipping_eta=shipping_eta,
                 valid_until=valid_until
                 or datetime.now(UTC) + timedelta(days=7),
             )
@@ -452,11 +470,9 @@ async def test_fresh_exact_evidence_creates_redacted_suggestion_with_snapshot(
     assert body["status"] == "suggestions_ready"
     assert len(body["suggestions"]) == 1
     suggestion = body["suggestions"][0]
-    assert suggestion["original_text"] == (
-        "推荐 红富士苹果（SKU APPLE-001）。"
-        "价格 CNY 29.90；库存 100；产地 山东烟台；净重 2500 克。"
-    )
+    assert suggestion["original_text"] == EXPECTED_RECOMMENDATION_TEXT
     assert suggestion["edited_text"] is None
+    assert suggestion["risk_tip"] == "此建议存在需确认事项，请人工复核后使用。"
     assert suggestion["recommended_sku_code"] == "APPLE-001"
     assert suggestion["rank"] == 1
     assert suggestion["degraded"] is False
@@ -980,10 +996,7 @@ async def test_model_free_text_facts_are_replaced_by_server_rendered_snapshot(
 
     assert response.status_code == 201
     assert response.json()["status"] == "suggestions_ready"
-    expected_text = (
-        "推荐 红富士苹果（SKU APPLE-001）。"
-        "价格 CNY 29.90；库存 100；产地 山东烟台；净重 2500 克。"
-    )
+    expected_text = EXPECTED_RECOMMENDATION_TEXT
     assert response.json()["suggestions"][0]["original_text"] == expected_text
     assert history.json()[0]["suggestions"][0]["original_text"] == expected_text
     assert suggestion_text not in repr(response.json())
@@ -1038,6 +1051,391 @@ async def test_contradictory_structured_claims_discard_generation(
     assert response.json()["status"] == "handoff_required"
     assert response.json()["suggestions"] == []
     assert "invalid_model_evidence" in response.json()["risk_reasons"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_model_free_text_and_risk_tip_never_persist(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a)
+    hostile_text = "Only 39.90. Contact wxid_attacker123."
+    hostile_tip = "Pay 39.90 through wxid_attacker123."
+    provider = AsyncMock()
+    provider.complete.return_value = _provider_response_with_facts(
+        suggestion_text=hostile_text,
+        fact_claims={},
+        risk_tip=hostile_tip,
+    )
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": "Please recommend this apple.",
+                    "selected_sku_codes": ["APPLE-001"],
+                },
+            )
+            history = await client.get("/api/v1/copilot/cases")
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "suggestions_ready"
+    suggestion = response.json()["suggestions"][0]
+    assert suggestion["risk_tip"] == "请根据系统商品事实向顾客说明。"
+    persisted = (
+        await session.execute(
+            text(
+                """
+                SELECT original_text, risk_tip
+                FROM copilot_suggestions
+                WHERE id = :suggestion_id
+                """
+            ),
+            {"suggestion_id": suggestion["id"]},
+        )
+    ).mappings().one()
+    for payload in (suggestion, history.json(), dict(persisted)):
+        rendered = repr(payload)
+        assert hostile_text not in rendered
+        assert hostile_tip not in rendered
+        assert "wxid_attacker123" not in rendered
+        assert "39.90 through" not in rendered
+    await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sql_shipping_eta", "claimed_shipping_eta"),
+    [
+        ("华东地区预计 2 天送达", None),
+        (None, "华东地区预计 2 天送达"),
+    ],
+)
+async def test_shipping_eta_claim_must_exactly_match_sql_even_when_null(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+    sql_shipping_eta: str | None,
+    claimed_shipping_eta: str | None,
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a, shipping_eta=sql_shipping_eta)
+    provider = AsyncMock()
+    provider.complete.return_value = _provider_response_with_facts(
+        suggestion_text="Model-selected recommendation.",
+        fact_claims={"shipping_eta": claimed_shipping_eta},
+    )
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": "Please recommend this apple.",
+                    "selected_sku_codes": ["APPLE-001"],
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "handoff_required"
+    assert response.json()["suggestions"] == []
+    assert "invalid_model_evidence" in response.json()["risk_reasons"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "intent",
+        "message",
+        "shipping_eta",
+        "expected_fragments",
+        "expected_risk_tip",
+    ),
+    [
+        (
+            "delivery",
+            "How long does shipping take?",
+            "华东地区预计 2 天送达",
+            ("配送范围：华东、华南", "预计时效：华东地区预计 2 天送达"),
+            "请根据系统配送范围和时效向顾客确认。",
+        ),
+        (
+            "storage",
+            "How should I store these apples?",
+            None,
+            ("储存参考", "成熟度 即食", "规格 12 枚礼盒"),
+            "请按系统储存信息和已审核知识向顾客说明。",
+        ),
+        (
+            "gift",
+            "Is this apple box suitable as a gift?",
+            None,
+            ("礼赠信息", "规格 12 枚礼盒", "净重 2500 克", "口感 脆甜"),
+            "请根据系统规格和产地信息确认礼赠需求。",
+        ),
+        (
+            "product_info",
+            "Tell me about this apple.",
+            None,
+            ("商品信息", "品种 红富士", "示范果园", "价格 CNY 29.90"),
+            "请根据系统商品事实向顾客说明。",
+        ),
+        (
+            "recommendation",
+            "Please recommend this apple.",
+            None,
+            ("推荐理由", "红富士", "脆甜", "12 枚礼盒"),
+            "请根据系统商品事实向顾客说明。",
+        ),
+    ],
+)
+async def test_server_renderer_uses_intent_relevant_trusted_sku_fields(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+    intent: str,
+    message: str,
+    shipping_eta: str | None,
+    expected_fragments: tuple[str, ...],
+    expected_risk_tip: str,
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a, shipping_eta=shipping_eta)
+    provider = AsyncMock()
+    provider.complete.return_value = _provider_response_with_facts(
+        suggestion_text=f"MODEL PROSE FOR {intent}",
+        fact_claims={"shipping_eta": shipping_eta},
+        intent=intent,
+    )
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": message,
+                    "selected_sku_codes": ["APPLE-001"],
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "suggestions_ready"
+    suggestion = response.json()["suggestions"][0]
+    assert suggestion["risk_tip"] == expected_risk_tip
+    assert f"MODEL PROSE FOR {intent}" not in repr(suggestion)
+    for fragment in expected_fragments:
+        assert fragment in suggestion["original_text"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_server_renderer_appends_only_referenced_approved_knowledge(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a)
+    approved_content = "苹果冷藏可保持更好的脆度。"
+    approved_id = await _seed_knowledge(
+        tenant_a,
+        content=approved_content,
+    )
+    provider = AsyncMock()
+    provider.complete.return_value = _provider_response_with_facts(
+        suggestion_text="MODEL STORAGE PROSE",
+        fact_claims={},
+        intent="storage",
+        referenced_knowledge_ids=[approved_id],
+    )
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": "苹果应该怎么冷藏保存？",
+                    "selected_sku_codes": ["APPLE-001"],
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "suggestions_ready"
+    suggestion = response.json()["suggestions"][0]
+    assert f"已审核知识：{approved_content}" in suggestion["original_text"]
+    assert "MODEL STORAGE PROSE" not in repr(suggestion)
+    assert any(
+        citation["source_id"] == str(approved_id)
+        for citation in suggestion["citations"]
+    )
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_model_drafts_for_one_sku_produce_one_card(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a)
+    claims = CopilotSKUFactClaims(
+        price=Decimal("29.90"),
+        currency="CNY",
+        inventory=100,
+        origin="山东烟台",
+        net_weight_grams=2500,
+        shipping_eta=None,
+    )
+    provider = AsyncMock()
+    provider.complete.return_value = CopilotProviderResponse(
+        output=CopilotAgentOutput(
+            stage="presale",
+            intent="recommendation",
+            risk_level="low",
+            suggestions=[
+                CopilotAgentSuggestion(
+                    suggestion_text="First model draft",
+                    recommended_sku_code="APPLE-001",
+                    confidence_score=0.95,
+                    fact_claims=claims,
+                ),
+                CopilotAgentSuggestion(
+                    suggestion_text="Duplicate model draft",
+                    recommended_sku_code="APPLE-001",
+                    confidence_score=0.85,
+                    fact_claims=claims,
+                ),
+            ],
+        ),
+        input_tokens=30,
+        output_tokens=20,
+    )
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": "Please recommend this apple.",
+                    "selected_sku_codes": ["APPLE-001"],
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "suggestions_ready"
+    assert len(response.json()["suggestions"]) == 1
+    assert response.json()["suggestions"][0]["confidence"] == 0.95
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_distinct_verified_skus_produce_distinct_cards(
+    copilot_context: tuple[TenantPrincipal, TenantPrincipal, AsyncSession],
+) -> None:
+    tenant_a, _, session = copilot_context
+    await _seed_sku(tenant_a)
+    await _seed_sku(
+        tenant_a,
+        sku_code="APPLE-002",
+        name="青苹果",
+    )
+    claims = CopilotSKUFactClaims(
+        price=Decimal("29.90"),
+        currency="CNY",
+        inventory=100,
+        origin="山东烟台",
+        net_weight_grams=2500,
+        shipping_eta=None,
+    )
+    provider = AsyncMock()
+    provider.complete.return_value = CopilotProviderResponse(
+        output=CopilotAgentOutput(
+            stage="presale",
+            intent="recommendation",
+            risk_level="low",
+            suggestions=[
+                CopilotAgentSuggestion(
+                    suggestion_text="Model draft one",
+                    recommended_sku_code="APPLE-001",
+                    confidence_score=0.95,
+                    fact_claims=claims,
+                ),
+                CopilotAgentSuggestion(
+                    suggestion_text="Model draft two",
+                    recommended_sku_code="APPLE-002",
+                    confidence_score=0.90,
+                    fact_claims=claims,
+                ),
+            ],
+        ),
+        input_tokens=30,
+        output_tokens=20,
+    )
+    app.state.model_providers = [_binding(provider)]
+    app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_principal] = lambda: tenant_a
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/copilot/cases",
+                json={
+                    "message": "Which apple do you recommend?",
+                    "selected_sku_codes": ["APPLE-001", "APPLE-002"],
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.model_providers = []
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "suggestions_ready"
+    suggestions = response.json()["suggestions"]
+    assert [item["recommended_sku_code"] for item in suggestions] == [
+        "APPLE-001",
+        "APPLE-002",
+    ]
+    assert suggestions[0]["original_text"] != suggestions[1]["original_text"]
+    assert "红富士苹果" in suggestions[0]["original_text"]
+    assert "青苹果" in suggestions[1]["original_text"]
     await session.close()
 
 

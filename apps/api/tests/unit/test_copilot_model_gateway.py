@@ -38,6 +38,22 @@ def test_copilot_suggestion_requires_complete_structured_fact_claims() -> None:
             }
         )
 
+    with pytest.raises(ValidationError):
+        CopilotAgentSuggestion.model_validate(
+            {
+                "suggestion_text": "Model free text",
+                "recommended_sku_code": "APPLE-001",
+                "confidence_score": 0.9,
+                "fact_claims": {
+                    "price": "29.90",
+                    "currency": "CNY",
+                    "inventory": 100,
+                    "origin": "山东烟台",
+                    "net_weight_grams": 2500,
+                },
+            }
+        )
+
 
 @pytest.mark.asyncio
 async def test_typed_copilot_output_uses_quality_gated_provider_and_redacts_message() -> None:
@@ -60,6 +76,7 @@ async def test_typed_copilot_output_uses_quality_gated_provider_and_redacts_mess
                         inventory=100,
                         origin="山东烟台",
                         net_weight_grams=2500,
+                        shipping_eta=None,
                     ),
                 )
             ],
