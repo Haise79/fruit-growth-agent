@@ -313,6 +313,70 @@ describe("CopilotWorkspace", () => {
     expect(clipboard.writeText).toHaveBeenCalledTimes(2);
   });
 
+  it("requires unsaved edits to be persisted before adoption", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routeFetch((url, init) => {
+        if (url.endsWith("/api/v1/copilot/cases") && !init.method) {
+          return jsonResponse([suggestionCase()]);
+        }
+      }),
+    );
+    render(<CopilotWorkspace />);
+
+    const editor = await screen.findByLabelText("建议 1 内容");
+    await userEvent.type(editor, " 补充客户称呼");
+
+    expect(screen.getByRole("button", { name: "采纳并复制" })).toBeDisabled();
+    expect(screen.getByText("请先保存修改，再采纳并复制")).toBeInTheDocument();
+  });
+
+  it("keeps recorded adoption successful when background refresh fails", async () => {
+    const current = suggestionCase();
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+    vi.stubGlobal(
+      "fetch",
+      routeFetch((url, init) => {
+        if (url.endsWith("/events") && init.method === "POST") {
+          return jsonResponse({
+            id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            case_id: CASE_ID,
+            suggestion_id: SUGGESTION_ID,
+            event_type: "suggestion_adopted",
+            occurred_at: "2026-07-20T08:10:00Z",
+            metadata: {},
+            created_at: "2026-07-20T08:10:00Z",
+            case_status: "suggestions_ready",
+          }, 201);
+        }
+        if (url.endsWith(`/cases/${CASE_ID}`)) {
+          return jsonResponse({ detail: "temporarily unavailable" }, 503);
+        }
+        if (url.endsWith("/api/v1/copilot/cases") && !init.method) {
+          return jsonResponse([current]);
+        }
+      }),
+    );
+    render(<CopilotWorkspace />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "采纳并复制" }),
+    );
+
+    expect(await screen.findByText("已复制并记录采纳")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "操作已记录，但工单刷新失败",
+    );
+    expect(screen.getByRole("button", { name: "重新刷新工单" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "本次操作记录" }))
+        .getAllByText("suggestion_adopted"),
+    ).toHaveLength(1);
+  });
+
   it("expands complete citation details on demand", async () => {
     vi.stubGlobal(
       "fetch",
@@ -349,8 +413,8 @@ describe("CopilotWorkspace", () => {
           expect(JSON.parse(String(init.body))).toEqual({
             event_type: eventType,
           });
-          expect(new Headers(init.headers).get("Idempotency-Key")).toBe(
-            `copilot:${CASE_ID}:${eventType}`,
+          expect(new Headers(init.headers).get("Idempotency-Key")).toMatch(
+            new RegExp(`^copilot:${CASE_ID}:${eventType}:`),
           );
           return jsonResponse({
             id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
@@ -390,6 +454,47 @@ describe("CopilotWorkspace", () => {
     ).toBeGreaterThanOrEqual(2);
     const timeline = screen.getByRole("region", { name: "本次操作记录" });
     expect(within(timeline).getByText(eventType)).toBeInTheDocument();
+  });
+
+  it("rotates the action-instance key after each successful repeated outcome", async () => {
+    const current = suggestionCase();
+    const keys: string[] = [];
+    let eventNumber = 0;
+    vi.stubGlobal(
+      "fetch",
+      routeFetch((url, init) => {
+        if (url.endsWith("/events") && init.method === "POST") {
+          eventNumber += 1;
+          keys.push(new Headers(init.headers).get("Idempotency-Key") ?? "");
+          return jsonResponse({
+            id: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb${eventNumber}`,
+            case_id: CASE_ID,
+            suggestion_id: null,
+            event_type: "payment",
+            occurred_at: "2026-07-20T08:20:00Z",
+            metadata: {},
+            created_at: "2026-07-20T08:20:00Z",
+            case_status: "suggestions_ready",
+          }, 201);
+        }
+        if (url.endsWith(`/cases/${CASE_ID}`)) {
+          return jsonResponse(current);
+        }
+        if (url.endsWith("/api/v1/copilot/cases") && !init.method) {
+          return jsonResponse([current]);
+        }
+      }),
+    );
+    render(<CopilotWorkspace />);
+    const payment = await screen.findByRole("button", { name: "记录付款" });
+
+    await userEvent.click(payment);
+    await screen.findByText("已记录：付款");
+    await userEvent.click(payment);
+    await waitFor(() => expect(keys).toHaveLength(2));
+
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(new Set(keys).size).toBe(2);
   });
 
   it("announces loading and retryable request errors", async () => {

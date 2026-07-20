@@ -25,11 +25,15 @@ export function SuggestionCard({
   const [text, setText] = useState(
     suggestion.edited_text ?? suggestion.original_text,
   );
+  const [savedText, setSavedText] = useState(
+    suggestion.edited_text ?? suggestion.original_text,
+  );
   const [saveStatus, setSaveStatus] = useState("");
   const [adoptStatus, setAdoptStatus] = useState("");
   const [adoptError, setAdoptError] = useState<"copy" | "event" | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isAdopting, setIsAdopting] = useState(false);
+  const isDirty = text.trim() !== savedText;
 
   async function saveEdit() {
     const editedText = text.trim();
@@ -45,7 +49,9 @@ export function SuggestionCard({
         suggestion.id,
         editedText,
       );
-      setText(saved.edited_text ?? saved.original_text);
+      const persistedText = saved.edited_text ?? saved.original_text;
+      setText(persistedText);
+      setSavedText(persistedText);
       setSaveStatus("修改已保存");
     } catch {
       setSaveStatus("修改保存失败，请重试");
@@ -154,7 +160,7 @@ export function SuggestionCard({
           </button>
           <button
             className="primary-button compact-button"
-            disabled={isAdopting}
+            disabled={isAdopting || isDirty}
             onClick={adopt}
             type="button"
           >
@@ -165,6 +171,9 @@ export function SuggestionCard({
                 : "采纳并复制"}
           </button>
         </div>
+        {isDirty ? (
+          <p className="inline-status">请先保存修改，再采纳并复制</p>
+        ) : null}
         {saveStatus ? (
           <p
             className={saveStatus.includes("失败") ? "form-error" : "inline-status"}

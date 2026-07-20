@@ -63,21 +63,33 @@ No backend schemas, migrations, routes, or services were changed.
    - The behavior assertions passed, but Vitest exited `1` with one unhandled
      rejection from `knowledge update failed`.
    - This proved that a denied edit showed an error but leaked a rejected
-     promise. The fix returns an explicit success boolean and keeps the editor
-     open for retry.
+   promise. The fix returns an explicit success boolean and keeps the editor
+   open for retry.
+3. Independent-review regressions:
+   - Command:
+     `node node_modules/vitest/vitest.mjs run
+     tests/copilot-workspace.test.tsx -t
+     "requires unsaved|keeps recorded|rotates the action" --reporter=dot`
+   - Result before remediation: `3 failed`.
+   - The failures proved that unsaved edits could be adopted, a successful
+     event could be misreported as failed when its background refresh failed,
+     and repeated outcomes reused one idempotency key.
 
 ## GREEN evidence
 
 - First focused Task 4 result: `2` files, `16` tests passed.
-- Final full web result after the edit-retry regression:
-  `3` files, `18` tests passed, zero unhandled errors.
+- Final full web result after the independent-review regressions:
+  `3` files, `21` tests passed, zero unhandled errors.
 - Covered behavior:
   - successful suggestions and maximum-three rendering;
   - mandatory handoff and reasons;
   - exact suggestion edit request;
   - clipboard-before-event adoption;
   - copy failure and event failure retry without false success;
-  - stable adoption and per-action idempotency keys;
+  - mandatory save-before-adopt for dirty suggestion edits;
+  - stable adoption and per-action-instance idempotency keys;
+  - successful event status preserved across background refresh failures,
+    with an explicit refresh retry;
   - expandable citation snapshots;
   - payment, refund, complaint, and close events;
   - detail/recent-case refresh and current-session timeline;
@@ -95,7 +107,7 @@ All commands used `CI=true`, the pinned Node runtime at
 and the pinned pnpm fallback.
 
 - `pnpm run test -- --reporter=dot` —
-  `3 passed` test files, `18 passed` tests.
+  `3 passed` test files, `21 passed` tests.
 - `pnpm run lint` — exit `0`, no ESLint warnings or errors.
 - `pnpm run build` — exit `0`; TypeScript passed and Next 16.2.10 statically
   generated `/copilot` and `/knowledge`.
@@ -155,9 +167,9 @@ design. No fixable visual mismatch remained in the inspected desktop or true
 ```text
 E030B05C98C23DC911CCB50962BFC27998AF12ED0F88C03F4AF408D8BF7B272A  apps/web/lib/types.ts
 770486E477767C72867CA03AA5C76141727C0B513409FBF76AF42299F5749A2F  apps/web/lib/api.ts
-70B55666808B445FBCAE238A055077CA99204BC40F110BBF58A94A3E96047C0C  apps/web/components/copilot/copilot-workspace.tsx
+CD8512F82F374493E774F0A1E417051C05E637E37A97800E12446366DB5ED599  apps/web/components/copilot/copilot-workspace.tsx
 4FDD01788A2FA2FA13799FBF012C1CA35A3D8C0C54486B76AB423FA78F0127DF  apps/web/components/knowledge/knowledge-workspace.tsx
-93318A448C851D9A0DD1D3864F95D72354B7739371C490370F228F4DC05112D4  apps/web/tests/copilot-workspace.test.tsx
+5B7FFB664081EF385F68C15FCAA80AB76D2F2BA3928B2C2384CE8E66B5161410  apps/web/tests/copilot-workspace.test.tsx
 C2FEB6FE87BF517E8F7895DC2F26271DB00C1904675C136AF064445247EA9859  apps/web/tests/knowledge-workspace.test.tsx
 092DBDCD0A47393455A69D454D999E7AAA626266EDF026169EA6AE3D41F80D34  docs/design/foundation-workspace-concept.png
 ```

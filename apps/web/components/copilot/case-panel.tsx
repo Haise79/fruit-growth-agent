@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { recordCopilotOutcome } from "@/lib/api";
 import type {
@@ -44,6 +44,18 @@ export function CasePanel({
   const [actionError, setActionError] = useState(false);
   const [pendingAction, setPendingAction] =
     useState<CopilotOutcomeEventType | null>(null);
+  const actionKeys = useRef<Partial<Record<CopilotOutcomeEventType, string>>>(
+    {},
+  );
+
+  function getActionKey(eventType: CopilotOutcomeEventType) {
+    const existing = actionKeys.current[eventType];
+    if (existing) return existing;
+
+    const created = `copilot:${currentCase.id}:${eventType}:${crypto.randomUUID()}`;
+    actionKeys.current[eventType] = created;
+    return created;
+  }
 
   async function recordAction(
     eventType: Exclude<CopilotOutcomeEventType, "suggestion_adopted" | "suggestion_rejected">,
@@ -52,13 +64,15 @@ export function CasePanel({
     setPendingAction(eventType);
     setActionStatus("");
     setActionError(false);
+    const idempotencyKey = getActionKey(eventType);
     try {
       const event = await recordCopilotOutcome(
         currentCase.id,
         { event_type: eventType },
-        `copilot:${currentCase.id}:${eventType}`,
+        idempotencyKey,
       );
       await onOutcome(event);
+      delete actionKeys.current[eventType];
       setActionStatus(`已记录：${label.replace("记录", "")}`);
     } catch {
       setActionError(true);

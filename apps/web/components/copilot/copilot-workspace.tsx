@@ -25,6 +25,7 @@ export function CopilotWorkspace() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [requestError, setRequestError] = useState("");
+  const [refreshError, setRefreshError] = useState("");
 
   const refreshCases = useCallback(async () => {
     const latest = await listCopilotCases();
@@ -76,12 +77,36 @@ export function CopilotWorkspace() {
   }
 
   async function handleOutcome(event: CopilotOutcomeEvent) {
-    setEvents((current) => [event, ...current]);
-    const [detail] = await Promise.all([
-      getCopilotCase(event.case_id),
-      refreshCases(),
-    ]);
-    setCurrentCase(detail);
+    setEvents((current) =>
+      current.some((existing) => existing.id === event.id)
+        ? current
+        : [event, ...current],
+    );
+    try {
+      const [detail] = await Promise.all([
+        getCopilotCase(event.case_id),
+        refreshCases(),
+      ]);
+      setCurrentCase(detail);
+      setRefreshError("");
+    } catch {
+      setRefreshError("操作已记录，但工单刷新失败，请重试刷新");
+    }
+  }
+
+  async function retryRefresh() {
+    if (!currentCase) return;
+
+    try {
+      const [detail] = await Promise.all([
+        getCopilotCase(currentCase.id),
+        refreshCases(),
+      ]);
+      setCurrentCase(detail);
+      setRefreshError("");
+    } catch {
+      setRefreshError("操作已记录，但工单刷新失败，请重试刷新");
+    }
   }
 
   async function selectCase(caseId: string) {
@@ -119,8 +144,17 @@ export function CopilotWorkspace() {
               {requestError}
             </p>
           ) : null}
+          {refreshError ? (
+            <div className="form-error page-alert" role="alert">
+              <span>{refreshError}</span>
+              <button className="text-button" onClick={retryRefresh} type="button">
+                重新刷新工单
+              </button>
+            </div>
+          ) : null}
           {currentCase ? (
             <CasePanel
+              key={currentCase.id}
               currentCase={currentCase}
               events={events}
               latencyMs={latencyMs}
