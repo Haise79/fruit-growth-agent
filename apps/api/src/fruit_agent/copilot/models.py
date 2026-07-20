@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    DateTime,
     Float,
     ForeignKey,
     ForeignKeyConstraint,
@@ -52,6 +53,10 @@ class CopilotCase(TenantOwnedMixin, Base):
             "status IN ('suggestions_ready', 'handoff_required', "
             "'degraded', 'closed')",
             name="ck_copilot_cases_status",
+        ),
+        CheckConstraint(
+            "response_time_ms >= 0",
+            name="ck_copilot_cases_response_time_ms",
         ),
     )
 
@@ -182,6 +187,12 @@ class CopilotCitationSnapshot(TenantOwnedMixin, Base):
     source_id: Mapped[UUID] = mapped_column(nullable=False)
     source_name: Mapped[str] = mapped_column(String(300), nullable=False)
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    source_updated_at: Mapped[datetime] = mapped_column(nullable=False)
-    retrieved_at: Mapped[datetime] = mapped_column(nullable=False)
+    source_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    retrieved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
     suggestion: Mapped[CopilotSuggestion] = relationship(back_populates="citations")

@@ -8,6 +8,15 @@ import { KnowledgeTable } from "@/components/knowledge/knowledge-table";
 const KNOWLEDGE_ID = "11111111-1111-4111-8111-111111111111";
 const OWNER_ID = "22222222-2222-4222-8222-222222222222";
 
+function sessionWith(permissions: string[], role = "owner") {
+  return {
+    user_id: OWNER_ID,
+    tenant_id: "33333333-3333-4333-8333-333333333333",
+    role,
+    permissions,
+  };
+}
+
 function jsonResponse(body: unknown, status = 200) {
   return Promise.resolve(
     new Response(JSON.stringify(body), {
@@ -38,6 +47,114 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+it("fails closed while support permissions are loading and after they resolve", async () => {
+  let resolveSession: ((response: Response) => void) | undefined;
+  const pendingSession = new Promise<Response>((resolve) => {
+    resolveSession = resolve;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/session")) return pendingSession;
+      if (url.endsWith("/api/v1/knowledge/items")) {
+        return jsonResponse([knowledgeItem()]);
+      }
+      throw new Error(`Unexpected request: GET ${url}`);
+    }),
+  );
+
+  render(<KnowledgeWorkspace />);
+  const row = await screen.findByRole("row", { name: /果园客服手册/ });
+  expect(screen.queryByRole("button", { name: "新增知识" })).not.toBeInTheDocument();
+  expect(within(row).queryByRole("button", { name: "编辑" })).not.toBeInTheDocument();
+  expect(within(row).queryByRole("button", { name: "批准" })).not.toBeInTheDocument();
+
+  resolveSession?.(
+    new Response(
+      JSON.stringify(sessionWith(["knowledge:read"], "support")),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "新增知识" })).not.toBeInTheDocument(),
+  );
+  expect(within(row).queryByRole("button", { name: "编辑" })).not.toBeInTheDocument();
+  expect(within(row).queryByRole("button", { name: "批准" })).not.toBeInTheDocument();
+});
+
+it("fails closed on session errors and offers a retry", async () => {
+  let sessionAttempts = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/session")) {
+        sessionAttempts += 1;
+        return sessionAttempts === 1
+          ? jsonResponse({ detail: "unavailable" }, 503)
+          : jsonResponse(
+              sessionWith(["knowledge:write", "knowledge:review"], "owner"),
+            );
+      }
+      if (url.endsWith("/api/v1/knowledge/items")) {
+        return jsonResponse([knowledgeItem()]);
+      }
+      throw new Error(`Unexpected request: GET ${url}`);
+    }),
+  );
+
+  render(<KnowledgeWorkspace />);
+  const row = await screen.findByRole("row", { name: /果园客服手册/ });
+  expect(await screen.findByText("权限加载失败，请重试")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "重试加载权限" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "新增知识" })).not.toBeInTheDocument();
+  expect(within(row).queryByRole("button", { name: "编辑" })).not.toBeInTheDocument();
+  expect(within(row).queryByRole("button", { name: "批准" })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "重试加载权限" }));
+  expect(await screen.findByRole("button", { name: "新增知识" })).toBeInTheDocument();
+  expect(sessionAttempts).toBe(2);
+});
+
+it.each([
+  ["owner", ["knowledge:write", "knowledge:review"]],
+  ["implementer", ["knowledge:write", "knowledge:review"]],
+])("shows maintenance controls only after %s permissions load", async (role, permissions) => {
+  let resolveSession: ((response: Response) => void) | undefined;
+  const pendingSession = new Promise<Response>((resolve) => {
+    resolveSession = resolve;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/session")) {
+        return pendingSession;
+      }
+      if (url.endsWith("/api/v1/knowledge/items")) {
+        return jsonResponse([knowledgeItem()]);
+      }
+      throw new Error(`Unexpected request: GET ${url}`);
+    }),
+  );
+
+  render(<KnowledgeWorkspace />);
+  const initialRow = await screen.findByRole("row", { name: /果园客服手册/ });
+  expect(screen.queryByRole("button", { name: "新增知识" })).not.toBeInTheDocument();
+  expect(within(initialRow).queryByRole("button", { name: "编辑" })).not.toBeInTheDocument();
+  resolveSession?.(
+    new Response(JSON.stringify(sessionWith(permissions, role)), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  expect(await screen.findByRole("button", { name: "新增知识" })).toBeInTheDocument();
+  const row = screen.getByRole("row", { name: /果园客服手册/ });
+  expect(within(row).getByRole("button", { name: "编辑" })).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "批准" })).toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "拒绝" })).toBeInTheDocument();
 });
 
 it("hides maintenance controls using the current session permissions", async () => {
@@ -99,7 +216,16 @@ it("shows every conflicting SKU source for human resolution", async () => {
 it("loads live knowledge rows with provenance, owner, status, freshness, and content", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue(jsonResponse([knowledgeItem()])),
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/session")) {
+        return jsonResponse(sessionWith(["knowledge:read"], "support"));
+      }
+      if (url.endsWith("/api/v1/knowledge/items")) {
+        return jsonResponse([knowledgeItem()]);
+      }
+      throw new Error(`Unexpected request: GET ${url}`);
+    }),
   );
 
   render(<KnowledgeWorkspace />);
@@ -149,6 +275,11 @@ it("creates knowledge with the exact API wire names", async () => {
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
+      if (url.endsWith("/api/v1/session")) {
+        return jsonResponse(
+          sessionWith(["knowledge:write", "knowledge:review"], "owner"),
+        );
+      }
       if (url.endsWith("/api/v1/knowledge/items") && init.method === "POST") {
         expect(JSON.parse(String(init.body))).toEqual({
           knowledge_type: "faq",
@@ -192,6 +323,11 @@ it("shows the returned draft reset after editing approved content", async () => 
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
+      if (url.endsWith("/api/v1/session")) {
+        return jsonResponse(
+          sessionWith(["knowledge:write", "knowledge:review"], "owner"),
+        );
+      }
       if (url.endsWith(`/items/${KNOWLEDGE_ID}`) && init.method === "PATCH") {
         expect(JSON.parse(String(init.body))).toMatchObject({
           content: "更新后的冷藏说明。",
@@ -234,6 +370,11 @@ it("edits every lifecycle field and converts API timestamps for datetime-local",
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
+      if (url.endsWith("/api/v1/session")) {
+        return jsonResponse(
+          sessionWith(["knowledge:write", "knowledge:review"], "owner"),
+        );
+      }
       if (url.endsWith(`/items/${KNOWLEDGE_ID}`) && init.method === "PATCH") {
         expect(JSON.parse(String(init.body))).toEqual({
           knowledge_type: "origin_story",
@@ -293,6 +434,11 @@ it("round-trips a non-UTC API validity instant through datetime-local", async ()
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
+      if (url.endsWith("/api/v1/session")) {
+        return jsonResponse(
+          sessionWith(["knowledge:write", "knowledge:review"], "owner"),
+        );
+      }
       if (url.endsWith(`/items/${KNOWLEDGE_ID}`) && init.method === "PATCH") {
         expect(JSON.parse(String(init.body)).valid_until).toBe(
           new Date(apiValue).toISOString(),
@@ -324,6 +470,11 @@ it("keeps a failed edit available for correction and retry", async () => {
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
+      if (url.endsWith("/api/v1/session")) {
+        return jsonResponse(
+          sessionWith(["knowledge:write", "knowledge:review"], "owner"),
+        );
+      }
       if (url.endsWith(`/items/${KNOWLEDGE_ID}`) && init.method === "PATCH") {
         return jsonResponse({ detail: "forbidden" }, 403);
       }
@@ -358,6 +509,11 @@ it("submits approve and reject review decisions while leaving authority to the A
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
+      if (url.endsWith("/api/v1/session")) {
+        return jsonResponse(
+          sessionWith(["knowledge:write", "knowledge:review"], "owner"),
+        );
+      }
       if (url.endsWith(`/items/${KNOWLEDGE_ID}/review`)) {
         const body = JSON.parse(String(init.body));
         decisions.push(body.review_status);
@@ -384,15 +540,22 @@ it("submits approve and reject review decisions while leaving authority to the A
 });
 
 it("announces load failures and retries the list request", async () => {
-  let attempt = 0;
+  let listAttempt = 0;
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => {
-      attempt += 1;
-      if (attempt === 1) {
-        return jsonResponse({ detail: "unauthorized" }, 401);
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/session")) {
+        return jsonResponse(sessionWith(["knowledge:read"], "support"));
       }
-      return jsonResponse([knowledgeItem()]);
+      if (url.endsWith("/api/v1/knowledge/items")) {
+        listAttempt += 1;
+        if (listAttempt === 1) {
+          return jsonResponse({ detail: "unauthorized" }, 401);
+        }
+        return jsonResponse([knowledgeItem()]);
+      }
+      throw new Error(`Unexpected request: GET ${url}`);
     }),
   );
 
@@ -405,7 +568,7 @@ it("announces load failures and retries the list request", async () => {
   await waitFor(() =>
     expect(screen.getByText("果园客服手册")).toBeInTheDocument(),
   );
-  expect(attempt).toBe(3);
+  expect(listAttempt).toBe(2);
 });
 
 function localDateTimeValue(value: string): string {

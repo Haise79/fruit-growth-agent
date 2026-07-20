@@ -136,8 +136,8 @@ class CopilotCitationRead(BaseModel):
     source_id: UUID
     source_name: str
     snapshot: dict[str, Any]
-    source_updated_at: datetime
-    retrieved_at: datetime
+    source_updated_at: AwareDatetime
+    retrieved_at: AwareDatetime
     created_at: datetime
 
 
@@ -182,7 +182,7 @@ class CopilotCaseRead(BaseModel):
     risk: CopilotRisk
     status: CopilotCaseStatus
     risk_reasons: list[str]
-    response_time_ms: int
+    response_time_ms: int = Field(ge=0)
     handoff_reason: str | None
     conflict_source_ids: list[str]
     suggestions: list[CopilotSuggestionRead]

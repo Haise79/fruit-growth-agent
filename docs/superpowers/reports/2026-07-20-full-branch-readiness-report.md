@@ -69,3 +69,33 @@ slice.
 Tenant RLS, existing API permission checks, immutable citation/outcome triggers,
 and the external-action safety boundary remain unchanged. No `.superpowers`
 artifacts are included.
+
+## 2026-07-21 rereview addendum
+
+The final security rereview findings are closed:
+
+- Knowledge maintenance controls now fail closed while session permissions are
+  loading, when the session request fails, and when permissions are malformed.
+  A visible retry action recovers the permission request. Support remains
+  read-only, while owner and implementer controls appear only after an
+  authorized session succeeds.
+- The migration `0009` contract is aligned across migration, ORM metadata, and
+  response schemas. Citation provenance columns explicitly use timezone-aware
+  SQLAlchemy types, case timing has the named non-negative check constraint in
+  model metadata, and Pydantic rejects naive provenance timestamps and negative
+  response timing.
+
+Focused RED states were captured for permissive loading/error controls, missing
+permission retry behavior, timezone-naive ORM metadata, and response schemas
+accepting naive provenance. The corresponding focused tests are green.
+
+Final rereview verification:
+
+- Backend: `268 passed in 46.05s`
+- Focused timezone/metadata schemas: `6 passed`
+- Frontend: `37 passed` across 4 Vitest files
+- Ruff: `All checks passed!`
+- mypy strict: `Success: no issues found in 55 source files`
+- ESLint: passed
+- Next.js production build: passed; all 8 static pages generated
+- Alembic: `base -> head -> base -> head` passed, including migration `0009`

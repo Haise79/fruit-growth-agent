@@ -37,6 +37,9 @@ export function KnowledgeWorkspace() {
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
   const [session, setSession] = useState<Session | null>(null);
+  const [permissionState, setPermissionState] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
   const [skuCode, setSkuCode] = useState("");
   const [skuResult, setSkuResult] = useState<ExactFactResult | null>(null);
   const [skuError, setSkuError] = useState("");
@@ -70,25 +73,48 @@ export function KnowledgeWorkspace() {
     };
   }, []);
 
+  async function retryPermissions() {
+    setPermissionState("loading");
+    setSession(null);
+    try {
+      const current = await getSession();
+      if (!Array.isArray(current.permissions)) {
+        throw new Error("invalid session permissions");
+      }
+      setSession(current);
+      setPermissionState("ready");
+    } catch {
+      setPermissionState("error");
+    }
+  }
+
   useEffect(() => {
     let active = true;
     getSession()
       .then((current) => {
-        if (active) setSession(current);
+        if (!Array.isArray(current.permissions)) {
+          throw new Error("invalid session permissions");
+        }
+        if (active) {
+          setSession(current);
+          setPermissionState("ready");
+        }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (active) setPermissionState("error");
+      });
     return () => {
       active = false;
     };
   }, []);
 
-  const permissions = Array.isArray(session?.permissions)
+  const permissions = permissionState === "ready" && Array.isArray(session?.permissions)
     ? session.permissions
     : null;
   const canWrite =
-    permissions === null || permissions.includes("knowledge:write");
+    permissions !== null && permissions.includes("knowledge:write");
   const canReview =
-    permissions === null || permissions.includes("knowledge:review");
+    permissions !== null && permissions.includes("knowledge:review");
 
   function replaceItem(next: KnowledgeItem) {
     setItems((current) =>
@@ -220,6 +246,18 @@ export function KnowledgeWorkspace() {
         <p className="form-error" role="alert">
           {actionError}
         </p>
+      ) : null}
+      {permissionState === "error" ? (
+        <div className="load-error" role="alert">
+          <span>权限加载失败，请重试</span>
+          <button
+            className="secondary-button"
+            onClick={retryPermissions}
+            type="button"
+          >
+            重试加载权限
+          </button>
+        </div>
       ) : null}
 
       {isLoading ? <p role="status">正在加载知识…</p> : null}
