@@ -20,7 +20,7 @@
 docker compose up -d postgres
 cd apps/api
 .\.venv\Scripts\alembic.exe upgrade head
-.\.venv\Scripts\uvicorn.exe fruit_agent.app:app --host 0.0.0.0 --port 8000
+.\.venv\Scripts\python.exe -m fruit_agent.server
 ```
 
 管理端：

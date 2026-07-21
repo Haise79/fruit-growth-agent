@@ -30,6 +30,7 @@ from fruit_agent.demo.constants import (
     DEMO_APPROVAL_IDS,
     DEMO_CASE_IDS,
     DEMO_CITATION_IDS,
+    DEMO_EMAILS,
     DEMO_KNOWLEDGE_IDS,
     DEMO_KNOWLEDGE_SOURCE_IDS,
     DEMO_MEMBERSHIPS,
@@ -148,12 +149,6 @@ async def _seed_identity(session: AsyncSession, future: datetime) -> None:
         },
         ("name", "valid_until"),
     )
-    names = {
-        Role.owner: "owner@demo.fruit-agent.local",
-        Role.operator: "operator@demo.fruit-agent.local",
-        Role.support: "support@demo.fruit-agent.local",
-        Role.implementer: "implementer@demo.fruit-agent.local",
-    }
     for role, user_id in DEMO_USERS.items():
         await _upsert(
             session,
@@ -161,7 +156,7 @@ async def _seed_identity(session: AsyncSession, future: datetime) -> None:
             {
                 "id": user_id,
                 "tenant_id": DEMO_TENANT_ID,
-                "email": names[role],
+                "email": DEMO_EMAILS[role],
                 "valid_until": future,
                 "audit_log": [],
             },

@@ -27,7 +27,7 @@ api-lint:
 	cd apps/api && .venv/Scripts/mypy.exe src
 
 api-run:
-	cd apps/api && .venv/Scripts/uvicorn.exe fruit_agent.app:app --reload
+	cd apps/api && .venv/Scripts/python.exe -m fruit_agent.server
 
 web-install:
 	cd apps/web && $(PNPM) install

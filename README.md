@@ -50,7 +50,7 @@ Copy-Item .env.example apps/api/.env
 # 将 apps/api/.env 中的 DEMO_MODE 改为 true
 cd apps/api
 .\.venv\Scripts\python.exe -m fruit_agent.demo.seed
-.\.venv\Scripts\uvicorn.exe fruit_agent.app:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m fruit_agent.server
 ```
 
 另开终端启动管理端：

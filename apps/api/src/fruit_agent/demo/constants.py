@@ -12,6 +12,13 @@ DEMO_USERS: dict[Role, UUID] = {
     Role.implementer: UUID("10000000-0000-4000-8000-000000000014"),
 }
 
+DEMO_EMAILS: dict[Role, str] = {
+    Role.owner: "owner@fruit-agent.example",
+    Role.operator: "operator@fruit-agent.example",
+    Role.support: "support@fruit-agent.example",
+    Role.implementer: "implementer@fruit-agent.example",
+}
+
 DEMO_MEMBERSHIPS: dict[Role, UUID] = {
     Role.owner: UUID("10000000-0000-4000-8000-000000000021"),
     Role.operator: UUID("10000000-0000-4000-8000-000000000022"),
