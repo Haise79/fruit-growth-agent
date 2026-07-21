@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -468,5 +469,10 @@ async def _main() -> None:
     print("API docs: http://localhost:8000/docs")
 
 
+def run() -> None:
+    loop_factory = asyncio.SelectorEventLoop if sys.platform == "win32" else None
+    asyncio.run(_main(), loop_factory=loop_factory)
+
+
 if __name__ == "__main__":
-    asyncio.run(_main())
+    run()

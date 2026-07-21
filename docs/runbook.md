@@ -9,6 +9,8 @@
 - `JWT_AUDIENCE=fruit-agent-api`。
 - `LOG_LEVEL`：建议生产使用 `INFO`。
 - `NEXT_PUBLIC_API_URL`：浏览器可访问的 API 地址。
+- `DEMO_MODE`：仅开发环境可设为 `true`，启用本地演示会话。
+- `DEMO_PRIVATE_KEY_PATH` / `DEMO_PUBLIC_KEY_PATH`：本地演示 JWT 密钥路径。
 
 不得把私钥、供应商密钥或真实用户敏感信息提交到仓库。
 
@@ -123,3 +125,22 @@ COMMIT;
 6. 在外部合规工单记录执行人、request ID、备份位置和验证证据。
 
 严禁让 Agent 或普通审批接口自动执行租户删除。
+
+## 本地完整演示
+
+只在 `ENVIRONMENT=development` 时启用 `DEMO_MODE=true`。在 `apps/api` 目录执行：
+
+```powershell
+.\.venv\Scripts\python.exe -m fruit_agent.demo.seed
+```
+
+命令会先迁移数据库，再以幂等方式写入完整演示数据并生成本地 RSA 密钥。重复运行不会重复创建审批、案例或结果事件。不要复制终端中以外的密钥内容，也不要提交 `.demo/`。
+
+前端需要在 `apps/web/.env.local` 设置：
+
+```text
+NEXT_PUBLIC_DEMO_MODE=true
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
+```
+
+访问首页，先选择角色建立 30 分钟的演示会话，再沿六步路线操作。演示数据与操作说明见 [中文演示指南](demo-walkthrough.md)。

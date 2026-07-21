@@ -1,6 +1,6 @@
 # Fruit Growth Agent
 
-面向水果商城运营团队的多租户 AI 工作台。当前实现覆盖第 1–2 周基础能力：租户隔离、成员权限、不可变审计、人工审批、商品与知识模型、CSV 导入、只读抖店 Mock、模型网关以及 Next.js 管理端。
+面向水果商城运营团队的多租户 AI 工作台。当前实现覆盖租户隔离、成员权限、不可变审计、人工审批、商品与知识模型、CSV 导入、运营 Copilot、结果反馈以及 Next.js 管理端。
 
 ## 安全原则
 
@@ -40,3 +40,25 @@ make verify
 API 默认地址为 `http://localhost:8000`，管理端默认地址为 `http://localhost:3000`。前端通过 `NEXT_PUBLIC_API_URL` 指向 API。
 
 详细操作见 [运行手册](docs/runbook.md)，设计决策见 [架构说明](docs/architecture.md)。
+
+## 中文完整演示
+
+开发环境可以生成一套可重复执行的“果序生鲜（华东）”演示数据。它包含 4 种角色、6 个商品、8 条知识、4 个审批和 5 个 Copilot 案例。
+
+```powershell
+Copy-Item .env.example apps/api/.env
+# 将 apps/api/.env 中的 DEMO_MODE 改为 true
+cd apps/api
+.\.venv\Scripts\python.exe -m fruit_agent.demo.seed
+.\.venv\Scripts\uvicorn.exe fruit_agent.app:app --host 127.0.0.1 --port 8000
+```
+
+另开终端启动管理端：
+
+```powershell
+cd apps/web
+Set-Content .env.local "NEXT_PUBLIC_DEMO_MODE=true`nNEXT_PUBLIC_API_URL=http://127.0.0.1:8000"
+pnpm dev
+```
+
+打开 `http://localhost:3000`，选择角色并按首页六步路线体验。详细脚本见 [中文演示指南](docs/demo-walkthrough.md)。演示开关在生产环境无效，生成的 RSA 私钥也只允许保存在被忽略的 `.demo/` 目录中。
