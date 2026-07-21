@@ -9,9 +9,12 @@ from fruit_agent.audit.middleware import get_request_id
 from fruit_agent.common.errors import DomainError, error_content
 from fruit_agent.common.redaction import redact
 from fruit_agent.config import get_settings
+from fruit_agent.copilot.router import router as copilot_router
 from fruit_agent.identity.router import router as identity_router
+from fruit_agent.identity.session_router import router as session_router
 from fruit_agent.imports.router import router as imports_router
 from fruit_agent.knowledge.router import router as knowledge_router
+from fruit_agent.knowledge.embeddings import default_embedding_provider
 from fruit_agent.logging import configure_logging
 from fruit_agent.model_gateway.router import router as model_gateway_router
 
@@ -20,12 +23,15 @@ def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
     app = FastAPI(title=settings.app_name, version="0.1.0")
+    app.state.embedding_provider = default_embedding_provider()
     app.add_middleware(RequestContextMiddleware)
     app.include_router(approvals_router)
     app.include_router(identity_router)
+    app.include_router(session_router)
     app.include_router(imports_router)
     app.include_router(knowledge_router)
     app.include_router(model_gateway_router)
+    app.include_router(copilot_router)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(

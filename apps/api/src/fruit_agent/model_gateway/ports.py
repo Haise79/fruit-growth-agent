@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from fruit_agent.model_gateway.schemas import ProviderResponse
+from fruit_agent.model_gateway.schemas import CopilotProviderResponse, ProviderResponse
 
 
 class ModelProvider(Protocol):
@@ -8,4 +8,4 @@ class ModelProvider(Protocol):
         self,
         prompt: dict[str, object],
         timeout_seconds: float,
-    ) -> ProviderResponse: ...
+    ) -> ProviderResponse | CopilotProviderResponse: ...

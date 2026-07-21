@@ -19,10 +19,12 @@ ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
             "members:write",
             "knowledge:read",
             "knowledge:write",
+            "knowledge:review",
             "imports:write",
             "approval:request",
             "approval:decide",
             "audit:read",
+            "copilot:use",
         }
     ),
     Role.implementer: frozenset(
@@ -31,6 +33,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
             "members:write",
             "knowledge:read",
             "knowledge:write",
+            "knowledge:review",
             "imports:write",
             "audit:read",
         }
@@ -42,9 +45,12 @@ ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
             "knowledge:write",
             "imports:write",
             "approval:request",
+            "copilot:use",
         }
     ),
-    Role.support: frozenset({"knowledge:read", "approval:request"}),
+    Role.support: frozenset(
+        {"knowledge:read", "approval:request", "copilot:use"}
+    ),
 }
 
 

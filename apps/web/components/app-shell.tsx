@@ -8,6 +8,7 @@ const navigation = [
   { href: "/", label: "概览", icon: "⌂" },
   { href: "/members", label: "成员权限", icon: "♙" },
   { href: "/knowledge", label: "知识与商品", icon: "□" },
+  { href: "/copilot", label: "客服 Copilot", icon: "◎" },
   { href: "/imports", label: "CSV 导入", icon: "▤" },
   { href: "/approvals", label: "人工审批", icon: "◇" },
 ];
@@ -27,6 +28,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav aria-label="主导航">
           {navigation.map((item) => (
             <Link
+              aria-current={pathname === item.href ? "page" : undefined}
               className={`nav-link ${
                 pathname === item.href ? "is-active" : ""
               }`}

@@ -12,6 +12,8 @@ from fruit_agent.knowledge.models import MerchantKnowledge
 from fruit_agent.model_gateway.ports import ModelProvider
 from fruit_agent.model_gateway.redaction import redact_prompt
 from fruit_agent.model_gateway.schemas import (
+    CopilotGatewayOutput,
+    CopilotProviderResponse,
     GatewaySuggestion,
     ModelProfile,
     ProviderResponse,
@@ -20,6 +22,7 @@ from fruit_agent.model_gateway.schemas import (
 logger = structlog.get_logger(__name__)
 MODEL_TIMEOUT_SECONDS = 8.0
 MAX_PRIMARY_ATTEMPTS = 3
+COPILOT_TOTAL_TIMEOUT_SECONDS = 14.0
 
 
 class NoQualifiedModelError(RuntimeError):
@@ -95,11 +98,50 @@ class ModelGateway:
                         prompt,
                         MODEL_TIMEOUT_SECONDS,
                     )
+                if not isinstance(response, ProviderResponse):
+                    raise InvalidModelOutputError(
+                        "provider returned non-suggestion output"
+                    )
                 return response, attempt - 1, perf_counter() - started
             except (TimeoutError, ProviderUnavailableError) as exc:
                 last_error = exc
                 await logger.awarning(
                     "model_provider_attempt_failed",
+                    model_name=binding.profile.name,
+                    attempt=attempt,
+                    timeout_seconds=MODEL_TIMEOUT_SECONDS,
+                    error_type=type(exc).__name__,
+                )
+        raise ProviderUnavailableError(
+            f"provider {binding.profile.name} unavailable"
+        ) from last_error
+
+    async def _complete_copilot(
+        self,
+        binding: ProviderBinding,
+        prompt: dict[str, object],
+        attempts: int,
+    ) -> tuple[CopilotProviderResponse, int, float]:
+        started = perf_counter()
+        last_error: BaseException | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                async with asyncio.timeout(MODEL_TIMEOUT_SECONDS):
+                    response = await binding.provider.complete(
+                        prompt,
+                        MODEL_TIMEOUT_SECONDS,
+                    )
+                if not isinstance(response, CopilotProviderResponse):
+                    raise InvalidModelOutputError(
+                        "provider returned malformed copilot output"
+                    )
+                return response, attempt - 1, perf_counter() - started
+            except InvalidModelOutputError:
+                raise
+            except Exception as exc:
+                last_error = exc
+                await logger.awarning(
+                    "copilot_provider_attempt_failed",
                     model_name=binding.profile.name,
                     attempt=attempt,
                     timeout_seconds=MODEL_TIMEOUT_SECONDS,
@@ -182,6 +224,84 @@ class ModelGateway:
         )
         return GatewaySuggestion(
             **response.suggestion.model_dump(),
+            model_name=selected.profile.name,
+            degraded=degraded,
+            retry_count=total_retries,
+            estimated_cost=cost,
+        )
+
+    async def suggest_copilot(
+        self,
+        *,
+        tenant_id: UUID,
+        prompt: dict[str, object],
+    ) -> CopilotGatewayOutput:
+        try:
+            async with asyncio.timeout(COPILOT_TOTAL_TIMEOUT_SECONDS):
+                return await self._suggest_copilot_within_deadline(
+                    tenant_id=tenant_id,
+                    prompt=prompt,
+                )
+        except TimeoutError as exc:
+            raise ProviderUnavailableError(
+                "copilot provider deadline exceeded"
+            ) from exc
+
+    async def _suggest_copilot_within_deadline(
+        self,
+        *,
+        tenant_id: UUID,
+        prompt: dict[str, object],
+    ) -> CopilotGatewayOutput:
+        redacted_prompt = redact_prompt(prompt)
+        bindings = self._qualified_bindings()
+        primary = bindings[0]
+        degraded = False
+        total_retries = 0
+
+        try:
+            response, retries, latency = await self._complete_copilot(
+                primary,
+                redacted_prompt,
+                MAX_PRIMARY_ATTEMPTS,
+            )
+            selected = primary
+            total_retries = retries
+        except ProviderUnavailableError:
+            if len(bindings) < 2:
+                raise
+            selected = bindings[1]
+            degraded = True
+            response, retries, latency = await self._complete_copilot(
+                selected,
+                redacted_prompt,
+                1,
+            )
+            total_retries = (MAX_PRIMARY_ATTEMPTS - 1) + retries
+
+        referenced_ids = [
+            knowledge_id
+            for suggestion in response.output.suggestions
+            for knowledge_id in suggestion.referenced_knowledge_ids
+        ]
+        await self._validate_references(tenant_id, referenced_ids)
+        total_tokens = response.input_tokens + response.output_tokens
+        cost = (
+            total_tokens
+            / 1000
+            * selected.profile.estimated_cost_per_1k_tokens
+        )
+        await logger.ainfo(
+            "copilot_model_call_completed",
+            tenant_id=str(tenant_id),
+            model_name=selected.profile.name,
+            latency_seconds=latency,
+            estimated_cost=cost,
+            retry_count=total_retries,
+            degraded=degraded,
+        )
+        return CopilotGatewayOutput(
+            **response.output.model_dump(),
             model_name=selected.profile.name,
             degraded=degraded,
             retry_count=total_retries,
