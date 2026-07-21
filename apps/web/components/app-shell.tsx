@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+
+import { getSession } from "@/lib/api";
+import type { Session } from "@/lib/types";
 
 const navigation = [
   { href: "/", label: "概览", icon: "⌂" },
@@ -13,8 +17,38 @@ const navigation = [
   { href: "/approvals", label: "人工审批", icon: "◇" },
 ];
 
+const roleLabels: Record<Session["role"], string> = {
+  owner: "负责人 · 完整管理",
+  operator: "运营人员 · 运营支持",
+  support: "客服人员 · 客服副驾",
+  implementer: "实施人员 · 知识维护",
+};
+
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const [session, setSession] = useState<Session | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    async function loadSession() {
+      if (!window.localStorage.getItem("fruit-agent-access-token")) {
+        if (active) setSession(null);
+        return;
+      }
+      try {
+        const loaded = await getSession();
+        if (active) setSession(loaded);
+      } catch {
+        if (active) setSession(null);
+      }
+    }
+    void loadSession();
+    window.addEventListener("fruit-agent-session-changed", loadSession);
+    return () => {
+      active = false;
+      window.removeEventListener("fruit-agent-session-changed", loadSession);
+    };
+  }, []);
 
   return (
     <div className="app-frame">
@@ -46,8 +80,14 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
       <div className="workspace">
         <header className="topbar">
-          <span>当前租户：果序生鲜（华东）</span>
-          <span className="operator">运 · 运营支持</span>
+          <span>
+            {session
+              ? "当前租户：果序生鲜（华东）"
+              : "当前租户：未建立演示会话"}
+          </span>
+          <span className="operator">
+            {session ? roleLabels[session.role] : "请选择演示角色"}
+          </span>
         </header>
         <main>{children}</main>
       </div>

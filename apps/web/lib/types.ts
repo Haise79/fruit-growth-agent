@@ -171,6 +171,14 @@ export type Session = {
   permissions: string[];
 };
 
+export type DemoRole = Session["role"];
+
+export type DemoSession = {
+  access_token: string;
+  expires_at: string;
+  role: DemoRole;
+};
+
 export type ExactFactResult = {
   status: "ok" | "expired" | "conflict" | "not_found";
   conflict_source_ids: string[];

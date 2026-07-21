@@ -12,6 +12,8 @@ import type {
   KnowledgeReviewStatus,
   Member,
   Session,
+  DemoRole,
+  DemoSession,
   ExactFactResult,
 } from "@/lib/types";
 
@@ -79,6 +81,13 @@ function jsonInit(method: "POST" | "PATCH", body: unknown): RequestInit {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
+}
+
+export function createDemoSession(role: DemoRole): Promise<DemoSession> {
+  return api<DemoSession>(
+    "/api/v1/demo/session",
+    jsonInit("POST", { role }),
+  );
 }
 
 export function createCopilotCase(
