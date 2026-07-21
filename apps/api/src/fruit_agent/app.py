@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from fruit_agent.approvals.router import router as approvals_router
 from fruit_agent.audit.middleware import RequestContextMiddleware
@@ -26,6 +27,13 @@ def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name, version="0.1.0")
     app.state.embedding_provider = default_embedding_provider()
     app.add_middleware(RequestContextMiddleware)
+    if settings.environment == "development":
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+            allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        )
     app.include_router(approvals_router)
     app.include_router(identity_router)
     app.include_router(session_router)
