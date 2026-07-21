@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     jwt_public_key: str = ""
     jwt_audience: str = "fruit-agent-api"
     log_level: str = "INFO"
+    demo_mode: bool = False
+    demo_private_key_path: str = ".demo/rs256-private.pem"
+    demo_public_key_path: str = ".demo/rs256-public.pem"
 
 
 @lru_cache

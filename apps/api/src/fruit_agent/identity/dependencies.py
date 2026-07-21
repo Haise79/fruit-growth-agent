@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fruit_agent.config import get_settings
 from fruit_agent.db import get_session, tenant_session
+from fruit_agent.demo.auth import jwt_verification_key
 from fruit_agent.identity.models import Membership, MembershipStatus, Role
 from fruit_agent.identity.schemas import TenantPrincipal
 from fruit_agent.identity.service import has_permission
@@ -30,7 +31,7 @@ async def get_principal(
     try:
         claims = jwt.decode(
             credentials.credentials,
-            settings.jwt_public_key,
+            jwt_verification_key(settings),
             algorithms=["RS256"],
             audience=settings.jwt_audience,
         )

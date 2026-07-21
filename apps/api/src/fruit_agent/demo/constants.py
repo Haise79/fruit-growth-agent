@@ -1,0 +1,12 @@
+from uuid import UUID
+
+from fruit_agent.identity.models import Role
+
+DEMO_TENANT_ID = UUID("10000000-0000-4000-8000-000000000001")
+
+DEMO_USERS: dict[Role, UUID] = {
+    Role.owner: UUID("10000000-0000-4000-8000-000000000011"),
+    Role.operator: UUID("10000000-0000-4000-8000-000000000012"),
+    Role.support: UUID("10000000-0000-4000-8000-000000000013"),
+    Role.implementer: UUID("10000000-0000-4000-8000-000000000014"),
+}

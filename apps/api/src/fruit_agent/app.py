@@ -10,6 +10,7 @@ from fruit_agent.common.errors import DomainError, error_content
 from fruit_agent.common.redaction import redact
 from fruit_agent.config import get_settings
 from fruit_agent.copilot.router import router as copilot_router
+from fruit_agent.demo.router import router as demo_router
 from fruit_agent.identity.router import router as identity_router
 from fruit_agent.identity.session_router import router as session_router
 from fruit_agent.imports.router import router as imports_router
@@ -32,6 +33,7 @@ def create_app() -> FastAPI:
     app.include_router(knowledge_router)
     app.include_router(model_gateway_router)
     app.include_router(copilot_router)
+    app.include_router(demo_router)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(
