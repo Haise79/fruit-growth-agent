@@ -1,147 +1,147 @@
-# Complete Demo Showcase Design
+# 完整功能演示设计
 
-**Date:** 2026-07-21
+**日期：** 2026-07-21
 
-## Goal
+## 目标
 
-Provide a complete, repeatable local demonstration of the existing Fruit Growth Agent product. A non-technical user must be able to enter a development-only demo session, browse every current workspace, and see a coherent fruit-commerce story backed by the real FastAPI API and PostgreSQL database.
+为 Fruit Growth Agent 提供一套完整、可重复执行的本地演示。非技术用户应当能够通过仅限开发环境的演示入口进入系统，浏览当前全部工作台，并看到由真实 FastAPI 接口和 PostgreSQL 数据库支撑的连贯水果电商业务故事。
 
-The showcase covers the current product scope only: overview, members, product import, trusted knowledge, approvals, and customer-service copilot. It does not simulate or enable real Douyin, Feige, refund, compensation, price, inventory, or publishing execution.
+演示只覆盖当前产品范围：能力概览、成员权限、商品导入、可信知识库、人工审批和客服副驾。演示不会模拟或启用真实的抖音、飞鸽、退款、赔付、改价、改库存或内容发布执行能力。
 
-## Recommended Approach
+## 推荐方案
 
-Use a real PostgreSQL-backed seed workflow plus a development-only demo sign-in. This gives the browser UI authentic API, permission, audit, RLS, knowledge, approval, and copilot behavior while keeping production authentication closed.
+采用真实 PostgreSQL 演示数据初始化流程，并增加仅限开发环境使用的演示登录。浏览器页面将调用真实接口，实际经过权限校验、租户隔离、审计、知识检索、审批和客服副驾逻辑，同时保持生产环境认证默认关闭演示能力。
 
-Alternatives rejected:
+未采用的方案：
 
-- Direct database seeding without a demo sign-in leaves a non-technical user responsible for generating and pasting JWTs.
-- Frontend-only fixture data cannot demonstrate backend authorization, persistence, tenant isolation, auditing, or safety behavior.
+- 只向数据库写入数据、不提供演示登录：非技术用户仍需自行生成和粘贴 JWT，使用门槛过高。
+- 只在前端使用假数据：无法展示后端授权、持久化、租户隔离、审计和安全策略确实有效。
 
-## Demo Story
+## 演示业务故事
 
-The demo tenant is `果序生鲜（华东）`, a regional fruit merchant preparing and supporting several seasonal products.
+演示租户为 `果序生鲜（华东）`，代表一家正在销售多种时令水果并处理客户咨询的区域水果商家。
 
-The seeded scenario includes:
+初始化数据包括：
 
-- Four active members representing owner, operator, support, and implementer responsibilities.
-- Six SKUs with realistic names, prices, inventory, origin, variety, ripeness, specification, weight, sales region, shipping estimate, freshness, and source metadata.
-- Eight knowledge records spanning approved, draft, rejected, expired, and conflicting states.
-- Four approval requests spanning pending, approved, and rejected decisions.
-- Five copilot cases demonstrating:
-  - a normal product question with grounded reply suggestions;
-  - a complaint requiring human handoff;
-  - a refund-related high-risk request;
-  - expired or conflicting evidence causing a fail-closed response;
-  - recursive masking of phone or address information.
-- Outcome events spanning suggestion adoption, rejection, payment, complaint, and case closure where compatible with the domain state machine.
+- 4 名有效成员，分别体现 owner、operator、support 和 implementer 的职责。
+- 6 个商品 SKU，包含真实感较强的名称、价格、库存、产地、品种、成熟度、规格、净重、销售区域、配送时效、新鲜度和来源信息。
+- 8 条知识记录，覆盖已审核、草稿、已拒绝、已过期和来源冲突等状态。
+- 4 条人工审批记录，覆盖待审批、已通过和已拒绝状态。
+- 5 个客服副驾案例，分别展示：
+  - 普通商品咨询，并生成有事实依据的回复建议；
+  - 客户投诉，并要求转人工；
+  - 涉及退款的高风险请求；
+  - 因知识过期或冲突而拒绝生成回复；
+  - 对手机号、地址等敏感信息递归脱敏。
+- 在符合领域状态机的前提下，提供建议采纳、建议拒绝、支付、投诉和结案等结果事件。
 
-All customer content is synthetic. No real person, phone number, address, order, credential, or merchant secret is used.
+所有客户内容均为虚构数据，不使用任何真实人员、手机号、地址、订单、凭据或商家机密。
 
-## Components
+## 系统组成
 
-### Idempotent Seed Command
+### 可重复执行的数据初始化命令
 
-A repository-owned Python command creates or refreshes the demo tenant using stable identifiers. It may update records that belong to the dedicated demo tenant, but it must not delete or modify any other tenant.
+在仓库内提供一个 Python 命令，使用固定标识创建或刷新演示租户。它可以更新专用演示租户的数据，但不得删除或修改其他租户的任何数据。
 
-The command:
+该命令按顺序执行：
 
-1. Verifies that the configured environment is development.
-2. Applies the current Alembic migrations.
-3. Creates the demo tenant and four users/members.
-4. Creates products, knowledge, approvals, cases, suggestions, citations, and outcome events in dependency order.
-5. Generates a local RS256 signing key pair when the demo key files do not exist.
-6. Emits the non-secret local URLs and a clear completion summary.
+1. 确认当前环境为开发环境。
+2. 执行当前 Alembic 数据库迁移。
+3. 创建演示租户以及 4 名用户和成员关系。
+4. 按依赖顺序创建商品、知识、审批、客服案例、回复建议、引用和结果事件。
+5. 如果本地不存在演示密钥文件，则生成 RS256 密钥对。
+6. 输出不包含秘密信息的本地访问地址和数据初始化摘要。
 
-Repeated runs converge to the same logical dataset instead of duplicating records. Existing non-demo tenant data remains untouched.
+重复运行后，系统应收敛到相同的逻辑数据和固定标识，不重复生成记录。其他非演示租户的数据必须保持不变。
 
-### Development-Only Demo Authentication
+### 仅限开发环境的演示认证
 
-Add an explicit demo-mode setting that defaults to disabled. A demo-session API is available only when both conditions hold:
+新增一个默认关闭的演示模式配置。只有同时满足以下条件，演示会话接口才可用：
 
 - `ENVIRONMENT=development`
 - `DEMO_MODE=true`
 
-When enabled, the endpoint returns a short-lived RS256 JWT for one seeded demo user. The endpoint supports selecting the seeded role so the permissions can be demonstrated. It never accepts an arbitrary tenant or user ID.
+启用后，接口可为指定的演示用户返回一个短期有效的 RS256 JWT。接口允许在已经初始化的演示角色之间选择，但不允许传入任意租户 ID 或用户 ID。
 
-When either condition is false, the endpoint behaves as unavailable. Production behavior and the normal JWT verifier remain unchanged.
+任一条件不满足时，演示接口表现为不存在。生产环境行为和现有 JWT 校验逻辑保持不变。
 
-### Demo Entry Screen
+### 演示入口页面
 
-The management UI shows a compact “进入演示” panel only when `NEXT_PUBLIC_DEMO_MODE=true`. The user chooses one of the seeded roles, requests a short-lived demo session, stores the returned token using the existing local-storage convention, and enters the workspace.
+只有在 `NEXT_PUBLIC_DEMO_MODE=true` 时，管理端才显示简洁的“进入演示”面板。用户选择一个演示角色，向后端请求短期演示会话，页面按照现有约定把令牌保存到本地存储，然后进入工作台。
 
-The panel clearly labels the environment as synthetic local demo data. It does not embed a permanent token, private key, or password in the frontend bundle.
+面板必须明确说明当前使用的是本地虚构演示数据。前端构建产物中不得内置永久令牌、私钥或密码。
 
-### Showcase Navigation
+### 功能展示导航
 
-Existing routes remain the source of truth:
+继续使用现有页面作为功能展示入口：
 
-- `/` — capability overview and demo identity
-- `/members` — seeded role membership
-- `/imports` — a ready-to-use CSV example and validation behavior
-- `/knowledge` — lifecycle, freshness, provenance, and conflict examples
-- `/approvals` — pending, approved, and rejected safety decisions
-- `/copilot` — grounded suggestions, handoff, redaction, history, and outcomes
+- `/`：能力概览和当前演示身份
+- `/members`：演示成员及角色权限
+- `/imports`：可直接使用的 CSV 示例和数据校验效果
+- `/knowledge`：知识生命周期、新鲜度、来源和冲突示例
+- `/approvals`：待审批、已通过和已拒绝的安全决策
+- `/copilot`：事实型建议、转人工、脱敏、历史记录和结果事件
 
-Only small demo guidance may be added. The product views continue to use the real APIs and existing components.
+可以增加少量演示指引，但所有产品页面仍需调用真实接口并复用现有组件。
 
-## Data and Security Boundaries
+## 数据与安全边界
 
-- The demo seed is scoped to one stable demo tenant ID.
-- Tenant-owned reads and writes keep explicit tenant filters and PostgreSQL RLS.
-- Demo authentication is disabled by default and fails closed outside development.
-- The signing private key remains local and gitignored.
-- Tokens are short-lived and contain only the seeded tenant, seeded user, audience, and expiry claims.
-- Synthetic sensitive-looking values are masked before persistence and model/provider invocation.
-- High-risk requests create handoff or approval states and never execute commerce actions.
-- Seed output and application logs must not print the private key or full JWT.
+- 初始化数据只允许写入一个具有固定 ID 的专用演示租户。
+- 所有租户数据的读取和写入继续使用显式租户条件及 PostgreSQL RLS。
+- 演示认证默认关闭，并且在非开发环境中必须拒绝启用。
+- 签名私钥只保存在本地，并通过 `.gitignore` 排除。
+- 演示令牌必须短期有效，并且只包含演示租户、演示用户、受众和过期时间声明。
+- 看似包含敏感信息的虚构数据，在持久化以及发送给模型或供应商前仍必须执行脱敏。
+- 高风险请求只能产生转人工或待审批状态，不得执行真实电商动作。
+- 初始化输出和应用日志不得打印私钥或完整 JWT。
 
-## Data Flow
+## 数据流程
 
-1. Developer enables local demo mode and starts PostgreSQL.
-2. Seed command migrates the database and converges the demo dataset.
-3. API and web applications start normally.
-4. User opens the demo entry panel and selects a seeded role.
-5. Web requests a short-lived demo token from the development-only endpoint.
-6. Existing API helpers attach the token to real requests.
-7. Each workspace reads or mutates the seeded tenant through normal permission, RLS, audit, safety, and validation paths.
+1. 开发者启用本地演示模式并启动 PostgreSQL。
+2. 数据初始化命令执行数据库迁移，并使演示数据收敛到预期状态。
+3. API 和管理端按照正常方式启动。
+4. 用户打开演示入口并选择一个演示角色。
+5. 管理端向仅限开发环境的接口申请短期演示令牌。
+6. 现有 API 工具在真实请求中附带该令牌。
+7. 各工作台通过正常的权限、RLS、审计、安全和校验流程读取或修改演示租户数据。
 
-## Error Handling
+## 错误处理
 
-- Missing database: the seed command exits with a direct instruction to start PostgreSQL.
-- Database at an incompatible migration: the command reports the current and expected revision without stamping or destroying data.
-- Demo mode disabled: demo-session endpoint returns 404 so the capability is not advertised.
-- Missing demo seed: demo-session endpoint returns a clear development-only setup error.
-- Seed collision outside the stable demo tenant: abort without modifying the conflicting record.
-- Partial seed failure: use a transaction so no incomplete demo dataset is committed.
-- Frontend session failure: keep the entry panel visible with a retryable Chinese error message.
+- 数据库未启动：初始化命令退出，并明确提示先启动 PostgreSQL。
+- 数据库迁移版本不兼容：报告当前版本和预期版本，不得执行 stamp 或破坏数据。
+- 演示模式未启用：演示会话接口返回 404，不暴露该能力。
+- 演示数据尚未初始化：演示会话接口返回清晰的开发环境配置错误。
+- 固定演示标识与非演示数据冲突：立即中止，不修改冲突记录。
+- 初始化执行到一半失败：使用数据库事务，禁止提交不完整的数据集。
+- 前端建立会话失败：保留演示入口，并显示可以重试的中文错误信息。
 
-## Verification
+## 验证标准
 
-Implementation is complete only after all of the following pass:
+只有满足以下全部条件，实施才算完成：
 
-- Seed command can run twice with stable counts and identifiers.
-- Non-demo tenant fixtures remain unchanged after seeding.
-- Demo-session endpoint is unavailable when demo mode is disabled or environment is not development.
-- Each seeded role receives only its declared permissions.
-- API tests cover members, knowledge states, approvals, copilot cases, citations, redaction, and outcomes in the seeded scenario.
-- Frontend tests cover demo entry success, failure, role selection, and token storage without embedding secrets.
-- Existing backend suite, security suite, Ruff, mypy, frontend Vitest, ESLint, and Next.js production build pass.
-- A smoke check opens every current route and confirms its primary API returns demo data.
+- 数据初始化命令连续运行两次后，记录数量和固定标识保持稳定。
+- 初始化前后的非演示租户测试数据完全不变。
+- 演示模式关闭或环境不是 development 时，演示会话接口不可用。
+- 每个演示角色只能获得该角色声明的权限。
+- 后端测试覆盖演示场景中的成员、知识状态、审批、客服案例、引用、脱敏和结果事件。
+- 前端测试覆盖进入演示成功、失败、角色选择和令牌存储，并证明前端未内置秘密信息。
+- 现有后端测试、安全测试、Ruff、mypy、前端 Vitest、ESLint 和 Next.js 生产构建全部通过。
+- 冒烟检查访问当前每一个页面，并确认其主要接口能够返回演示数据。
 
-## Operational Use
+## 实际使用方式
 
-The finished workflow will expose one documented command for seeding and concise commands for starting API and web. The final handoff includes:
+完成后，仓库提供一个明确的数据初始化命令，以及简洁的 API 和管理端启动命令。最终交付信息包括：
 
-- local management URL;
-- local API documentation URL;
-- available demo roles;
-- a guided route-by-route demonstration script;
-- instructions for refreshing only the dedicated demo dataset.
+- 本地管理端访问地址；
+- 本地 API 文档地址；
+- 可以选择的演示角色；
+- 按页面组织的完整演示讲解顺序；
+- 只刷新专用演示数据的操作说明。
 
-## Out of Scope
+## 不在本次范围内
 
-- Real Douyin or Feige authorization and messaging.
-- Real refunds, compensation, price changes, inventory changes, or content publishing.
-- Production user registration, password authentication, or account recovery.
-- Short-video Agent, content calendar, growth dashboard, billing, and production deployment.
-- Seeding or modifying any tenant other than the dedicated local demo tenant.
+- 真实抖音或飞鸽授权及消息收发。
+- 真实退款、赔付、改价、改库存或内容发布。
+- 生产用户注册、密码登录或账号找回。
+- 短视频 Agent、内容日历、增长看板、计费和生产部署。
+- 初始化或修改专用本地演示租户以外的任何租户。
