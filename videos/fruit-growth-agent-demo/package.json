@@ -1,0 +1,10 @@
+{
+  "name": "fruit-growth-agent-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "hyperframes preview",
+    "check": "hyperframes check",
+    "render": "hyperframes render"
+  }
+}

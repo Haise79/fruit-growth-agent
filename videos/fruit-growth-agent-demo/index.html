@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1920, height=1080">
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Microsoft YaHei"; src: local("Microsoft YaHei"); font-weight: 400 900; }
+      @font-face { font-family: "PingFang SC"; src: local("PingFang SC"); font-weight: 400 900; }
+      @font-face { font-family: "Geist Mono"; src: local("Geist Mono"); font-weight: 400 700; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #FFFFFF; }
+      body { color: #171B19; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: #FFFFFF; }
+      .scene { position: absolute; inset: 0; overflow: hidden; background: #FFFFFF; opacity: 0; }
+      #scene-1 { opacity: 1; }
+      .scene-inner { width: 100%; height: 100%; padding: 58px 66px 120px; display: flex; flex-direction: column; gap: 22px; }
+      .scene-label { align-self: flex-start; background: #075F42; border-radius: 999px; color: #FFFFFF; font-size: 20px; font-weight: 700; padding: 8px 16px; z-index: 5; }
+      .shot-frame { position: absolute; inset: 0; overflow: hidden; background: #FFFFFF; }
+      .shot-frame img { width: 100%; height: 100%; object-fit: cover; display: block; will-change: transform; }
+      .shot-frame::after { content: ""; position: absolute; inset: 0; border: 1px solid #DCE2DF; pointer-events: none; }
+      .top-vignette { position: absolute; inset: 0 0 auto; height: 120px; background: rgba(255,255,255,.12); pointer-events: none; }
+      .caption { position: absolute; left: 160px; right: 160px; bottom: 40px; min-height: 78px; display: flex; align-items: center; justify-content: center; background: rgba(3,75,52,.94); border: 1px solid #B9DACD; border-radius: 8px; color: #FFFFFF; font-size: 34px; font-weight: 650; line-height: 1.35; padding: 14px 30px; text-align: center; z-index: 20; opacity: 0; visibility: hidden; }
+      .caption strong { color: #FFFFFF; font-weight: 900; }
+      .cursor { position: absolute; left: 0; top: 0; width: 26px; height: 26px; border: 5px solid #075F42; border-radius: 50%; background: rgba(237,247,242,.88); box-shadow: 0 0 0 10px rgba(7,95,66,.16); z-index: 18; opacity: 0; }
+      .focus { position: absolute; border: 5px solid #075F42; border-radius: 8px; box-shadow: 0 0 0 9999px rgba(255,255,255,.08); z-index: 12; opacity: 0; }
+      .focus.risk { border-color: #E64135; box-shadow: 0 0 0 8px rgba(230,65,53,.12); }
+      .metric-card { position: absolute; right: 92px; top: 170px; width: 420px; background: #FFFFFF; border: 2px solid #B9DACD; padding: 26px 30px; z-index: 14; opacity: 0; }
+      .metric-card span { color: #69716D; display: block; font-size: 20px; }
+      .metric-card strong { color: #075F42; display: block; font-size: 64px; margin: 6px 0; font-variant-numeric: tabular-nums; }
+      .metric-card p { font-size: 22px; margin: 0; }
+      .opening-grid { position: absolute; inset: 0; display: grid; grid-template-columns: 720px 1fr; background: #FFFFFF; }
+      .opening-copy { display: flex; flex-direction: column; justify-content: center; gap: 24px; padding: 100px 70px 150px 120px; }
+      .opening-mark { width: 92px; height: 92px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #075F42; color: #FFFFFF; font-size: 46px; font-weight: 900; }
+      .opening-copy h1 { font-size: 78px; letter-spacing: -.05em; line-height: 1.08; margin: 0; }
+      .opening-copy p { color: #69716D; font-size: 28px; line-height: 1.6; margin: 0; max-width: 560px; }
+      .opening-browser { margin: 68px 70px 140px 0; overflow: hidden; border: 2px solid #B9DACD; box-shadow: 0 28px 70px rgba(3,75,52,.16); }
+      .opening-browser img { width: 100%; height: 100%; object-fit: cover; object-position: left top; }
+      .flow-chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+      .flow-chips span { border: 1px solid #B9DACD; color: #034B34; font-size: 20px; font-weight: 700; padding: 8px 13px; }
+      .completion-panel { position: absolute; left: 260px; top: 170px; width: 650px; background: rgba(255,255,255,.96); border: 2px solid #B9DACD; padding: 30px 36px; z-index: 14; }
+      .completion-panel h2 { color: #034B34; font-size: 42px; margin: 0 0 20px; }
+      .completion-panel ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; }
+      .completion-panel li { border-bottom: 1px solid #DCE2DF; font-size: 24px; padding: 7px 0; }
+      .completion-panel li::before { content: "✓"; color: #075F42; font-weight: 900; margin-right: 12px; }
+      .end-lockup { position: absolute; right: 130px; top: 210px; width: 620px; background: #034B34; color: #FFFFFF; padding: 55px; z-index: 15; }
+      .end-lockup b { display: block; font-size: 58px; margin-bottom: 24px; }
+      .end-lockup p { font-size: 28px; line-height: 1.5; margin: 0; }
+      .mono { font-family: "Geist Mono", Consolas, monospace; }
+    </style>
+  </head>
+  <body>
+    <div data-hf-id="hf-ebpq" id="root" data-composition-id="fruit-agent-demo" data-start="0" data-duration="180" data-width="1920" data-height="1080">
+      <section data-hf-id="hf-k674" class="scene" id="scene-1">
+        <div data-hf-id="hf-0ayp" class="opening-grid">
+          <div data-hf-id="hf-850y" class="opening-copy">
+            <div data-hf-id="hf-pi7q" class="opening-mark">果</div>
+            <h1 data-hf-id="hf-kdfc">果序 Agent<br data-hf-id="hf-x5px">完整功能演示</h1>
+            <p data-hf-id="hf-mm63">从角色权限和商品数据，到知识治理、人工审批、运营建议与结果反馈。</p>
+            <div data-hf-id="hf-xc4u" class="flow-chips"><span data-hf-id="hf-23s2">权限</span><span data-hf-id="hf-uqy4">商品</span><span data-hf-id="hf-067y">知识</span><span data-hf-id="hf-yf3v">审批</span><span data-hf-id="hf-v0qv">Copilot</span><span data-hf-id="hf-9plq">结果</span></div>
+          </div>
+          <div data-hf-id="hf-k9lr" class="opening-browser"><img data-hf-id="hf-y18x" src="capture/screenshots/scroll-000.png" alt="果序 Agent 首页"></div>
+        </div>
+        <div data-hf-id="hf-dxzm" class="caption" id="cap-1a">果序 Agent：面向水果电商运营团队的多租户工作台。</div>
+        <div data-hf-id="hf-iat8" class="caption" id="cap-1b">完整虚构数据，不连接真实店铺，不执行真实退款、改价或发布。</div>
+      </section>
+
+      <section data-hf-id="hf-v1or" class="scene" id="scene-2">
+        <div data-hf-id="hf-69u4" class="shot-frame"><img data-hf-id="hf-23dp" src="screens/home-session.png" alt="已建立运营角色会话的首页"></div>
+        <div data-hf-id="hf-97sb" class="scene-inner"><span data-hf-id="hf-o0ss" class="scene-label">01 · 建立演示会话</span></div>
+        <div data-hf-id="hf-twig" class="focus" id="focus-session" style="left:1485px; top:13px; width:390px; height:52px"></div>
+        <div data-hf-id="hf-c1pg" class="focus" id="focus-role" style="left:495px; top:330px; width:370px; height:65px"></div>
+        <div data-hf-id="hf-56gh" class="cursor" id="cursor-session"></div>
+        <div data-hf-id="hf-jlol" class="caption" id="cap-2a">选择“运营人员”，进入果序生鲜（华东）的演示空间。</div>
+        <div data-hf-id="hf-vota" class="caption" id="cap-2b">真实 API 签发短期会话；右上角显示当前租户和角色。</div>
+      </section>
+
+      <section data-hf-id="hf-r3kq" class="scene" id="scene-3">
+        <div data-hf-id="hf-r3hg" class="shot-frame"><img data-hf-id="hf-zt4g" src="screens/members.png" alt="四名演示成员"></div>
+        <div data-hf-id="hf-skgb" class="scene-inner"><span data-hf-id="hf-7hv0" class="scene-label">02 · 成员与权限</span></div>
+        <div data-hf-id="hf-5ncu" class="focus" id="focus-members" style="left:242px; top:207px; width:1640px; height:295px"></div>
+        <div data-hf-id="hf-k8u3" class="metric-card" id="metric-members"><span data-hf-id="hf-c2bz">演示成员</span><strong data-hf-id="hf-df2y">4</strong><p data-hf-id="hf-6efz">负责人 · 运营 · 客服 · 实施</p></div>
+        <div data-hf-id="hf-etyc" class="cursor" id="cursor-members"></div>
+        <div data-hf-id="hf-kyfq" class="caption" id="cap-3a">同一租户预置四名成员，对应四种封闭角色。</div>
+        <div data-hf-id="hf-c61m" class="caption" id="cap-3b">后端查询始终携带租户身份，避免跨租户读取。</div>
+      </section>
+
+      <section data-hf-id="hf-8bv1" class="scene" id="scene-4">
+        <div data-hf-id="hf-pwkd" class="shot-frame"><img data-hf-id="hf-13hi" src="screens/imports.png" alt="CSV 导入校验结果"></div>
+        <div data-hf-id="hf-s65a" class="scene-inner"><span data-hf-id="hf-ellm" class="scene-label">03 · 商品 CSV 导入</span></div>
+        <div data-hf-id="hf-ci5d" class="focus" id="focus-import" style="left:240px; top:365px; width:840px; height:135px"></div>
+        <div data-hf-id="hf-3lgu" class="focus risk" id="focus-import-error" style="left:235px; top:555px; width:1338px; height:130px"></div>
+        <div data-hf-id="hf-ayoo" class="cursor" id="cursor-import"></div>
+        <div data-hf-id="hf-qg0l" class="caption" id="cap-4a">下载中文演示 CSV，上传后立即逐行校验。</div>
+        <div data-hf-id="hf-n2tv" class="caption" id="cap-4b">两行数据：成功一行、失败一行；错误行保留修正建议。</div>
+      </section>
+
+      <section data-hf-id="hf-7k78" class="scene" id="scene-5">
+        <div data-hf-id="hf-qave" class="shot-frame"><img data-hf-id="hf-d05o" src="screens/knowledge.png" alt="八条演示知识"></div>
+        <div data-hf-id="hf-rru9" class="scene-inner"><span data-hf-id="hf-sjfx" class="scene-label">04 · 知识与商品</span></div>
+        <div data-hf-id="hf-hgiw" class="focus" id="focus-knowledge" style="left:660px; top:245px; width:160px; height:630px"></div>
+        <div data-hf-id="hf-lo92" class="focus risk" id="focus-expired" style="left:240px; top:710px; width:1645px; height:160px"></div>
+        <div data-hf-id="hf-cwee" class="metric-card" id="metric-knowledge"><span data-hf-id="hf-yjo9">知识条目</span><strong data-hf-id="hf-i6ra">8</strong><p data-hf-id="hf-a4gg">已通过 · 草稿 · 已拒绝 · 过期 · 冲突</p></div>
+        <div data-hf-id="hf-wljx" class="caption" id="cap-5a">八条知识覆盖审核、草稿、拒绝、过期和来源冲突。</div>
+        <div data-hf-id="hf-gzy9" class="caption" id="cap-5b">价格与库存只走精确事实；不可靠内容不会进入推荐。</div>
+      </section>
+
+      <section data-hf-id="hf-g833" class="scene" id="scene-6">
+        <div data-hf-id="hf-saej" class="shot-frame"><img data-hf-id="hf-t6fv" src="screens/approvals.png" alt="人工审批记录"></div>
+        <div data-hf-id="hf-rdj8" class="scene-inner"><span data-hf-id="hf-n2u7" class="scene-label">05 · 人工审批</span></div>
+        <div data-hf-id="hf-i7tm" class="focus" id="focus-approval" style="left:240px; top:205px; width:1645px; height:300px"></div>
+        <div data-hf-id="hf-ya9w" class="focus" id="focus-approval-note" style="left:235px; top:200px; width:520px; height:62px"></div>
+        <div data-hf-id="hf-kifi" class="cursor" id="cursor-approval"></div>
+        <div data-hf-id="hf-1uca" class="caption" id="cap-6a">退款、改价、改库存和内容发布，都属于高风险动作。</div>
+        <div data-hf-id="hf-kvw0" class="caption" id="cap-6b">这里只记录批准或拒绝与审计轨迹，不执行任何外部动作。</div>
+      </section>
+
+      <section data-hf-id="hf-c9z2" class="scene" id="scene-7">
+        <div data-hf-id="hf-sopk" class="shot-frame"><img data-hf-id="hf-np8e" src="screens/copilot.png" alt="Copilot 案例概览"></div>
+        <div data-hf-id="hf-qz87" class="scene-inner"><span data-hf-id="hf-u020" class="scene-label">06 · 运营 Copilot</span></div>
+        <div data-hf-id="hf-11qc" class="focus" id="focus-cases" style="left:1595px; top:210px; width:310px; height:485px"></div>
+        <div data-hf-id="hf-mmdi" class="focus" id="focus-classify" style="left:240px; top:780px; width:1340px; height:105px"></div>
+        <div data-hf-id="hf-4v2l" class="cursor" id="cursor-copilot"></div>
+        <div data-hf-id="hf-bqy7" class="caption" id="cap-7a">Copilot 识别客户意图、情绪和风险，再生成最多三条候选建议。</div>
+        <div data-hf-id="hf-edo5" class="caption" id="cap-7b">每条建议附带知识或商品事实引用，运营人员可以编辑和复制。</div>
+        <div data-hf-id="hf-ppht" class="caption" id="cap-7c">高风险问题会提示转交人工，不会越权自动处理。</div>
+      </section>
+
+      <section data-hf-id="hf-el29" class="scene" id="scene-8">
+        <div data-hf-id="hf-rhsh" class="shot-frame"><img data-hf-id="hf-ae8c" src="screens/copilot-detail.png" alt="Copilot 结果与事件详情"></div>
+        <div data-hf-id="hf-qkx6" class="scene-inner"><span data-hf-id="hf-ua1k" class="scene-label">07 · 业务结果闭环</span></div>
+        <div data-hf-id="hf-co9b" class="focus" id="focus-outcome" style="left:235px; top:190px; width:1340px; height:185px"></div>
+        <div data-hf-id="hf-yscq" class="focus" id="focus-events" style="left:235px; top:380px; width:1340px; height:470px"></div>
+        <div data-hf-id="hf-ggdl" class="metric-card" id="metric-cases"><span data-hf-id="hf-0wha">预置案例</span><strong data-hf-id="hf-d0rx">5</strong><p data-hf-id="hf-yivc">建议 · 引用 · 编辑 · 结果事件</p></div>
+        <div data-hf-id="hf-gye7" class="caption" id="cap-8a">每个案例保留建议、引用快照、编辑记录和结果事件。</div>
+        <div data-hf-id="hf-o8xz" class="caption" id="cap-8b">这些结构化数据可用于复盘采用率、风险处理和质量评估。</div>
+      </section>
+
+      <section data-hf-id="hf-blso" class="scene" id="scene-9">
+        <div data-hf-id="hf-rw3i" class="shot-frame"><img data-hf-id="hf-9lij" src="capture/screenshots/scroll-100.png" alt="完整演示路线"></div>
+        <div data-hf-id="hf-hpxf" class="completion-panel">
+          <h2 data-hf-id="hf-mi5t">完整链路已就绪</h2>
+          <ol data-hf-id="hf-eaxy"><li data-hf-id="hf-zr35">角色与租户权限</li><li data-hf-id="hf-5va2">商品数据导入</li><li data-hf-id="hf-wf4s">知识治理</li><li data-hf-id="hf-fkrh">人工审批</li><li data-hf-id="hf-l2r1">运营 Copilot</li><li data-hf-id="hf-8tyt">业务结果反馈</li></ol>
+        </div>
+        <div data-hf-id="hf-blgm" class="end-lockup"><b data-hf-id="hf-ot4d">果序 Agent</b><p data-hf-id="hf-r0kf">人工确认优先<br data-hf-id="hf-rsrt">事实依据可追溯</p></div>
+        <div data-hf-id="hf-olnv" class="caption" id="cap-9a">从数据进入到业务结果，完整链路已经可以本地运行。</div>
+        <div data-hf-id="hf-yurw" class="caption" id="cap-9b">果序 Agent。人工确认优先，事实依据可追溯。</div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      function caption(id, start, end) {
+        const el = document.querySelector(id);
+        tl.set(el, { visibility: "visible" }, start);
+        tl.fromTo(el, { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: .45, ease: "power3.out" }, start);
+        tl.to(el, { opacity: 0, scale: .98, duration: .18, ease: "power2.in" }, end - .18);
+        tl.set(el, { opacity: 0, visibility: "hidden" }, end);
+      }
+
+      function transition(oldId, newId, at) {
+        tl.to(oldId, { filter: "blur(10px)", scale: 1.025, opacity: 0, duration: .5, ease: "power2.inOut" }, at);
+        tl.fromTo(newId, { filter: "blur(10px)", scale: .98, opacity: 0 }, { filter: "blur(0px)", scale: 1, opacity: 1, duration: .5, ease: "power2.inOut" }, at + .1);
+      }
+
+      function shotMotion(sceneId, start, duration, x, y) {
+        tl.fromTo(`${sceneId} .shot-frame img`, { scale: 1, x: 0, y: 0 }, { scale: 1.025, x, y, duration, ease: "none" }, start);
+      }
+
+      tl.fromTo(".opening-mark", { opacity: 0, scale: .72, rotation: -10 }, { opacity: 1, scale: 1, rotation: 0, duration: .65, ease: "back.out(1.5)" }, .2);
+      tl.fromTo(".opening-copy h1", { opacity: 0, x: -55 }, { opacity: 1, x: 0, duration: .8, ease: "expo.out" }, .45);
+      tl.fromTo(".opening-copy p", { opacity: 0, y: 32 }, { opacity: 1, y: 0, duration: .6, ease: "power2.out" }, .75);
+      tl.fromTo(".flow-chips span", { opacity: 0, scale: .86 }, { opacity: 1, scale: 1, duration: .35, stagger: .07, ease: "sine.out" }, 1.05);
+      tl.fromTo(".opening-browser", { opacity: 0, x: 120 }, { opacity: 1, x: 0, duration: .9, ease: "power4.out" }, .35);
+      tl.fromTo(".opening-browser img", { scale: 1 }, { scale: 1.035, duration: 11.5, ease: "none" }, .3);
+      caption("#cap-1a", 1.8, 6.4); caption("#cap-1b", 6.5, 11.7);
+
+      transition("#scene-1", "#scene-2", 11.75);
+      shotMotion("#scene-2", 12, 20, -12, -8);
+      tl.fromTo("#scene-2 .scene-label", { opacity: 0, x: -50 }, { opacity: 1, x: 0, duration: .55, ease: "expo.out" }, 12.25);
+      tl.fromTo("#focus-role", { opacity: 0, scale: .94 }, { opacity: 1, scale: 1, duration: .5, ease: "back.out(1.3)" }, 13.2);
+      tl.fromTo("#cursor-session", { opacity: 0, x: 560, y: 330 }, { opacity: 1, x: 800, y: 358, duration: 1.1, ease: "power2.inOut" }, 13.4);
+      tl.fromTo("#focus-session", { opacity: 0, scale: .97 }, { opacity: 1, scale: 1, duration: .6, ease: "sine.out" }, 21.2);
+      tl.to("#cursor-session", { x: 1800, y: 42, duration: 1.4, ease: "power3.inOut" }, 20.4);
+      caption("#cap-2a", 13, 21.2); caption("#cap-2b", 21.3, 31.7);
+
+      transition("#scene-2", "#scene-3", 31.75);
+      shotMotion("#scene-3", 32, 18, 10, -5);
+      tl.fromTo("#scene-3 .scene-label", { opacity: 0, y: -35 }, { opacity: 1, y: 0, duration: .5, ease: "power3.out" }, 32.2);
+      tl.fromTo("#focus-members", { opacity: 0, scaleY: .88 }, { opacity: 1, scaleY: 1, duration: .65, ease: "expo.out" }, 33.1);
+      tl.fromTo("#metric-members", { opacity: 0, x: 75 }, { opacity: 1, x: 0, duration: .7, ease: "back.out(1.2)" }, 35.1);
+      tl.fromTo("#cursor-members", { opacity: 0, x: 670, y: 238 }, { opacity: 1, x: 1430, y: 467, duration: 5, ease: "sine.inOut" }, 33.4);
+      caption("#cap-3a", 33, 40.7); caption("#cap-3b", 40.8, 49.7);
+
+      transition("#scene-3", "#scene-4", 49.75);
+      shotMotion("#scene-4", 50, 20, -8, 4);
+      tl.fromTo("#scene-4 .scene-label", { opacity: 0, x: -45 }, { opacity: 1, x: 0, duration: .5, ease: "power4.out" }, 50.2);
+      tl.fromTo("#focus-import", { opacity: 0, scale: .92 }, { opacity: 1, scale: 1, duration: .6, ease: "back.out(1.4)" }, 51.5);
+      tl.fromTo("#cursor-import", { opacity: 0, x: 410, y: 203 }, { opacity: 1, x: 760, y: 203, duration: 1.4, ease: "power2.inOut" }, 51.2);
+      tl.fromTo("#focus-import-error", { opacity: 0, y: 25 }, { opacity: 1, y: 0, duration: .55, ease: "expo.out" }, 60.2);
+      tl.to("#cursor-import", { x: 680, y: 646, duration: 1.3, ease: "sine.inOut" }, 60.1);
+      caption("#cap-4a", 51, 59.7); caption("#cap-4b", 59.8, 69.7);
+
+      transition("#scene-4", "#scene-5", 69.75);
+      shotMotion("#scene-5", 70, 22, 8, -10);
+      tl.fromTo("#scene-5 .scene-label", { opacity: 0, y: 35 }, { opacity: 1, y: 0, duration: .55, ease: "expo.out" }, 70.2);
+      tl.fromTo("#focus-knowledge", { opacity: 0, scaleY: .8 }, { opacity: 1, scaleY: 1, duration: .7, ease: "power3.out" }, 71.5);
+      tl.fromTo("#metric-knowledge", { opacity: 0, x: 80 }, { opacity: 1, x: 0, duration: .75, ease: "back.out(1.25)" }, 74.5);
+      tl.fromTo("#focus-expired", { opacity: 0, scale: .96 }, { opacity: 1, scale: 1, duration: .55, ease: "sine.out" }, 81.4);
+      caption("#cap-5a", 71, 80.8); caption("#cap-5b", 80.9, 91.7);
+
+      transition("#scene-5", "#scene-6", 91.75);
+      shotMotion("#scene-6", 92, 20, -8, 6);
+      tl.fromTo("#scene-6 .scene-label", { opacity: 0, x: -45 }, { opacity: 1, x: 0, duration: .5, ease: "power3.out" }, 92.2);
+      tl.fromTo("#focus-approval", { opacity: 0, scaleY: .9 }, { opacity: 1, scaleY: 1, duration: .65, ease: "expo.out" }, 93.1);
+      tl.fromTo("#cursor-approval", { opacity: 0, x: 1670, y: 350 }, { opacity: 1, x: 1250, y: 350, duration: 1.2, ease: "power2.inOut" }, 94.2);
+      tl.fromTo("#focus-approval-note", { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: .5, ease: "back.out(1.2)" }, 102.5);
+      caption("#cap-6a", 93, 101.7); caption("#cap-6b", 101.8, 111.7);
+
+      transition("#scene-6", "#scene-7", 111.75);
+      shotMotion("#scene-7", 112, 36, -10, -14);
+      tl.fromTo("#scene-7 .scene-label", { opacity: 0, y: -35 }, { opacity: 1, y: 0, duration: .55, ease: "power4.out" }, 112.2);
+      tl.fromTo("#focus-cases", { opacity: 0, x: 35 }, { opacity: 1, x: 0, duration: .7, ease: "expo.out" }, 113.2);
+      tl.fromTo("#cursor-copilot", { opacity: 0, x: 1770, y: 345 }, { opacity: 1, x: 1750, y: 625, duration: 4, ease: "sine.inOut" }, 114);
+      tl.fromTo("#focus-classify", { opacity: 0, scaleX: .86 }, { opacity: 1, scaleX: 1, duration: .7, ease: "back.out(1.15)" }, 124.2);
+      tl.to("#cursor-copilot", { x: 900, y: 835, duration: 2, ease: "power3.inOut" }, 124.1);
+      caption("#cap-7a", 113, 124); caption("#cap-7b", 124.1, 136); caption("#cap-7c", 136.1, 147.7);
+
+      transition("#scene-7", "#scene-8", 147.75);
+      shotMotion("#scene-8", 148, 20, 6, -8);
+      tl.fromTo("#scene-8 .scene-label", { opacity: 0, x: -45 }, { opacity: 1, x: 0, duration: .5, ease: "expo.out" }, 148.2);
+      tl.fromTo("#focus-outcome", { opacity: 0, y: -25 }, { opacity: 1, y: 0, duration: .6, ease: "power3.out" }, 149.1);
+      tl.fromTo("#focus-events", { opacity: 0, scaleY: .88 }, { opacity: 1, scaleY: 1, duration: .7, ease: "sine.out" }, 156.8);
+      tl.fromTo("#metric-cases", { opacity: 0, x: 80 }, { opacity: 1, x: 0, duration: .7, ease: "back.out(1.25)" }, 158.3);
+      caption("#cap-8a", 149, 157.7); caption("#cap-8b", 157.8, 167.7);
+
+      transition("#scene-8", "#scene-9", 167.75);
+      shotMotion("#scene-9", 168, 12, -5, -5);
+      tl.fromTo(".completion-panel", { opacity: 0, x: -70 }, { opacity: 1, x: 0, duration: .75, ease: "expo.out" }, 168.25);
+      tl.fromTo(".completion-panel li", { opacity: 0, x: -25 }, { opacity: 1, x: 0, duration: .32, stagger: .1, ease: "power2.out" }, 169);
+      tl.fromTo(".end-lockup", { opacity: 0, x: 80 }, { opacity: 1, x: 0, duration: .8, ease: "power4.out" }, 169.1);
+      caption("#cap-9a", 168.8, 174.2); caption("#cap-9b", 174.3, 179.4);
+      tl.to("#scene-9", { opacity: 0, duration: .6, ease: "sine.in" }, 179.4);
+      tl.set("#scene-9", { opacity: 0, visibility: "hidden" }, 180);
+
+      window.__timelines["fruit-agent-demo"] = tl;
+    </script>
+  </body>
+</html>

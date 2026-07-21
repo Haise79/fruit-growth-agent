@@ -1,0 +1,6 @@
+.chrome-profile/
+.ffmpeg-bin/
+node_modules/
+renders/
+snapshots/
+*.log

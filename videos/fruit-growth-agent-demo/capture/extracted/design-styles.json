@@ -1,0 +1,169 @@
+{
+  "typography": [
+    {
+      "role": "display",
+      "fontFamily": "Inter",
+      "fontSize": "32px",
+      "fontWeight": "700",
+      "lineHeight": "38.4px",
+      "letterSpacing": "-1.28px",
+      "color": "#171B19",
+      "sampleText": "基础能力概览"
+    },
+    {
+      "role": "heading",
+      "fontFamily": "Inter",
+      "fontSize": "24px",
+      "fontWeight": "700",
+      "lineHeight": "30px",
+      "letterSpacing": "normal",
+      "color": "#171B19",
+      "sampleText": "完整功能演示"
+    },
+    {
+      "role": "heading-2",
+      "fontFamily": "Inter",
+      "fontSize": "20px",
+      "fontWeight": "700",
+      "lineHeight": "31px",
+      "letterSpacing": "normal",
+      "color": "#171B19",
+      "sampleText": "进入完整功能演示"
+    },
+    {
+      "role": "heading-2",
+      "fontFamily": "Inter",
+      "fontSize": "18px",
+      "fontWeight": "700",
+      "lineHeight": "27.9px",
+      "letterSpacing": "normal",
+      "color": "#171B19",
+      "sampleText": "成员与权限"
+    },
+    {
+      "role": "link",
+      "fontFamily": "Inter",
+      "fontSize": "18px",
+      "fontWeight": "720",
+      "lineHeight": "27.9px",
+      "letterSpacing": "normal",
+      "color": "#171B19",
+      "sampleText": "果果序 Agent"
+    },
+    {
+      "role": "body",
+      "fontFamily": "Inter",
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "lineHeight": "23.25px",
+      "letterSpacing": "normal",
+      "color": "#69716D",
+      "sampleText": "人工确认优先"
+    },
+    {
+      "role": "label",
+      "fontFamily": "Inter",
+      "fontSize": "13px",
+      "fontWeight": "650",
+      "lineHeight": "20.15px",
+      "letterSpacing": "normal",
+      "color": "#171B19",
+      "sampleText": "演示角色"
+    }
+  ],
+  "spacing": {
+    "observed": [
+      3,
+      7,
+      10,
+      13,
+      14,
+      16,
+      22,
+      24,
+      26,
+      36
+    ],
+    "baseUnit": 8
+  },
+  "radius": [
+    "999px"
+  ],
+  "shadows": [],
+  "buttons": [
+    {
+      "label": "进入完整演示",
+      "background": "#075F42",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#FFFFFF",
+      "padding": "0px 22px",
+      "borderRadius": "4px",
+      "border": "1px solid rgb(7, 95, 66)",
+      "boxShadow": "none",
+      "fontSize": "14px",
+      "fontWeight": "650",
+      "height": "42px"
+    }
+  ],
+  "cards": [
+    {
+      "label": "card",
+      "background": "transparent",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#171B19",
+      "padding": "26px 0px",
+      "borderRadius": "0px",
+      "border": "",
+      "boxShadow": "none",
+      "fontSize": "15px",
+      "fontWeight": "400",
+      "height": "80.8906px"
+    }
+  ],
+  "nav": {
+    "label": "navigation",
+    "background": "transparent",
+    "backgroundImage": "",
+    "backdropFilter": "",
+    "color": "#171B19",
+    "padding": "14px 0px 0px",
+    "borderRadius": "0px",
+    "border": "0px none rgb(23, 27, 25)",
+    "boxShadow": "none",
+    "fontSize": "15px",
+    "fontWeight": "400",
+    "height": "361px"
+  },
+  "chips": [
+    {
+      "label": "本地虚构数据",
+      "background": "#075F42",
+      "color": "#FFFFFF",
+      "padding": "4px 10px",
+      "borderRadius": "999px",
+      "border": "0px none rgb(255, 255, 255)",
+      "boxShadow": "none",
+      "fontSize": "12px",
+      "fontWeight": "700",
+      "height": "26.5938px"
+    },
+    {
+      "label": "果",
+      "background": "#075F42",
+      "color": "#FFFFFF",
+      "padding": "0px",
+      "borderRadius": "50%",
+      "border": "0px none rgb(255, 255, 255)",
+      "boxShadow": "none",
+      "fontSize": "18px",
+      "fontWeight": "720",
+      "height": "34px"
+    }
+  ],
+  "statCells": [],
+  "tabs": [],
+  "backgrounds": [],
+  "glass": []
+}
